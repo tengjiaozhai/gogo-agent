@@ -19,7 +19,7 @@
 ## 当前基线与技术选择
 
 - Java 源项目使用 Spring Boot、AgentScope Java、MyBatis-Plus、MySQL、Redis、Sa-Token、WebFlux。当前请求主链是 `ChatController → ChatAgentExecutor → AgentPipelineService → 快速意图识别/条件改写 → MasterAgent → 子 Agent`；同一会话的继续消息还可能直接续跑活跃 Agent。`AgentPipelineService.dispatchByIntent` 中的“高置信单意图直跳”代码目前被注释，不能按 README 将其视为现行路径。
-- README 声称有 9 个 ReActAgent，实际 `ReActAgent.builder` 只在 Master、行程管理、规划、审核、预订、信息 Agent 中出现；问题改写和意图识别是 `AgentBase` 的单次模型调用，报销 Agent 的 `build()` 仍返回 `null`。迁移清单必须按源码逐一确认。
+- README 声称有 9 个 ReActAgent，实际 `ReActAgent.builder` 只在 Master、行程管理、规划、审核、预订、信息 Agent 中出现；其中独立的 `ItineraryReviewAgent` 已标 `@Deprecated`，当前规划路径调用 `ItineraryReviewTools.review_itinerary`。问题改写和意图识别是 `AgentBase` 的单次模型调用，报销 Agent 的 `build()` 仍返回 `null`。迁移清单必须按源码逐一确认。
 - 当前 Python 工作区只有 IDE 示例 `main.py` 和无依赖的 `pyproject.toml`，其中声明 `requires-python = ">=3.14"`；现有 `.venv` 是 Python 3.14.0，尚未安装 AgentScope。第 001 步要对选定 AgentScope Python 版本、Python 运行时和数据库驱动做实际安装与最小调用验证，再锁定版本；不要先假定 3.14 兼容。
 - 以 **AgentScope Python 2.x** 为学习与迁移目标。官方说明 2.x 与 1.x 有破坏性差异；禁止把旧版 `doc.agentscope.io/tutorial/` 中的 `ReActAgent(..., formatter=...)`、`register_tool_function` 示例直接照搬。当前 2.x 的核心概念是 `Agent`、`Toolkit`、`FunctionTool`、状态与事件；用第 001 步锁定版本的[官方文档](https://docs.agentscope.io/)和实际安装包确认 API。
 - 初步选择 **FastAPI 薄接口层 + AgentScope 2.x SDK + 项目自己的业务服务和仓储**，用于保持现有 REST/SSE 契约。第 003 步要与 AgentScope 自带 Agent Service 做一次小型对照；其示例服务不自带最终用户认证，不能仅靠占位 `X-User-ID` 上线。无论选哪条路径，模型生成的 `userId`、审批结论和订单写入都不能绕过服务端鉴权。
@@ -54,7 +54,7 @@
 | 012 三层识别 | 定义规则、向量检索、LLM 的命中阈值、回退与统一结果，保存来源和置信信息。 |
 | 013 L0/L1 规则 | 移植明确意图规则、优先级和冲突处理；有效命中、误命中、空输入均测试。 |
 | 014 L2 RAG | 移植意图样例库、向量化和相似度判定；固定样例集比较召回与误路由。 |
-| 015 多意图识别 | L1/L2 识别多意图时保持顺序、去重和证据；测试组合请求。 |
+| 015 多意图识别 | 移植 L0 复合意图守卫：疑似多意图时 L1/L2 快路由弃权，由完整 L3 输出有序意图列表；测试组合请求不被压成单意图。 |
 | 016 多意图执行 | 实现多个意图的调度与结果归并；写操作不因重试或多意图重复执行。 |
 | 017 流水线 | 串起快速识别、条件改写、完整识别、路由；对每个分支写可复现用例。 |
 | 018 准确率修复 | 迁移 Java 已有规则和阈值修复；比较固定语料的分类/路由差异并记录原因。 |
@@ -110,14 +110,14 @@
 | 047 天气 MCP | 用选定 AgentScope Python 版本的 MCP 接口接入天气服务；验证连接生命周期和错误。 |
 | 048 外部能力比较 | 核对 Java 实际启用的 Skill/MCP 与可用凭证，形成“迁移/替代/停用”清单。 |
 | 049 途牛 | 对接途牛现有搜索/预订能力；先只读和模拟下单，记录请求/响应契约。 |
-| 050 航班管家 | 核对实际使用的 Skill、鉴权和输入输出；以固定响应验证转换。 |
-| 051 Rolling Go | 迁移酒店查询与用户隔离；并发用户不共享登录态或工作目录。 |
-| 052 审核 Agent 理由 | 明确审核需独立判断的边界与确定性规则边界。 |
-| 053 审核 Agent | 接入六维审核；固定结构化输出和拒绝/需修改状态。 |
+| 050 航班管家 | 核对 Skill 资源、鉴权和输入输出；当前规划/预订 Agent 未注册该 Skill，先做固定响应的独立练习，不误报已启用。 |
+| 051 Rolling Go | 核对 `rgh` Shell/Token 隔离路径与未注册的 Skill 资源；先用模拟 CLI 验证并发用户不共享登录态或工作目录，再决定实际接入边界。 |
+| 052 审核 Agent 理由 | 对照文章与现行源码：独立 `ItineraryReviewAgent` 已弃用，明确审核工具中的客观规则与主观评估边界。 |
+| 053 审核实现 | 迁移现行 `review_itinerary` 工具的六维客观检查、三路主观评估与仲裁；固定结构化输出和拒绝/需修改状态。 |
 | 054 最终审核工具 | 移植最终校验，覆盖空方案、超预算、时间冲突和不完整证据。 |
 | 055 第三方鉴权 | 统一外部服务凭证归属、授权范围和更新/失效规则；列出每个服务实际策略。 |
 | 056 Token 配置 | 实现需 Token 的服务端注入，确保工具和日志不返回密钥。 |
-| 057 OAuth PKCE | 仅对源项目实际使用的 OAuth 服务迁移本地回调/换令牌流程；验证 state、code verifier 和过期处理。 |
+| 057 OAuth PKCE | 学习并用模拟授权方验证 `state`、code verifier 和过期处理；源项目把 Rolling Go 的 OAuth 流程交给 `rgh` CLI，Python 是否接管回调需另核对。 |
 | 058 外部 Skill 生产化 | 补齐实际需要的超时、退出码、结构化错误、用户隔离和可重复调用。 |
 | 059 API Key 管理 | 迁移密钥存取、加密、脱敏、更新及撤销；验证数据库/日志/模型上下文均不泄漏。 |
 | 060 规划结果传递 | ReviewAgent 从有所有权校验的计划存储读取 PlanAgent 结果；验证跨会话引用失败。 |
@@ -203,7 +203,7 @@
 ## 待核对的关键事实
 
 1. `pyproject.toml` 当前要求 Python 3.14；AgentScope Python 与全部数据库/模型依赖的真实兼容范围要以安装和 smoke test 确认。
-2. Java README 与 `开发进展.md` 对 BookingAgent 位置、工具/Skill 清单等表述不完全一致；README 还把未生效的单意图直跳写成现行策略，并高估 ReActAgent 数量。迁移时以运行时装配和测试为准。
+2. Java README 与 `开发进展.md` 对 BookingAgent 位置、工具/Skill 清单等表述不完全一致；README 还把未生效的单意图直跳和已弃用的独立审核 Agent 写成现行策略，并高估 ReActAgent 数量。迁移时以运行时装配和测试为准。
 3. Java README 将报销 Agent 和 A2A 列为未完成/待办。后续若要把它们变成 Python 新功能，需要另定验收标准，不作为 Java 功能等价迁移的阻塞项。
 4. 当前尚未核实生产数据迁移与现有前端对 Python API 的逐字段兼容；第 002/003 步建立契约样本，第 098/102 步完成联调验收。
 5. `ApprovalCallbackController` 的源码标注“待完善”，在所见控制器代码中未找到登录或签名校验；外围代理是否校验尚未核实。第 038 步先确认来源验证机制，不将该入口按原样开放。

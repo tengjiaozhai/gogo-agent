@@ -25,6 +25,7 @@
 | 查阅阶段 H（086–094 执行闭环与多实例恢复）的实现指引 | [`docs/学习路线/阶段H-086-094.md`](docs/学习路线/阶段H-086-094.md) |
 | 查阅阶段 I（095–102 RAG/MCP/协议与部署）的实现指引 | [`docs/学习路线/阶段I-095-102.md`](docs/学习路线/阶段I-095-102.md) |
 | 查阅 Python 3.14 稳定性与兼容性评估 | [`docs/research/python-3.14-compatibility-assessment.md`](docs/research/python-3.14-compatibility-assessment.md) |
+| 查阅或运行 000 基础小练习 | [`docs/学习路线/README.md`](docs/学习路线/README.md) |
 | 创建、检查或更新代码地图 | `code-map/SKILL.md` |
 
 ## 工作规则

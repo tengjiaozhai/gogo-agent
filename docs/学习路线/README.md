@@ -40,4 +40,4 @@
 
 本计划学习 **AgentScope Python 2.x**。官方明确说明 2.x 与 1.x 有破坏性差异；当前 Python 项目要求 `>=3.14`，其 `.venv` 是 3.14.0，且还未装 AgentScope。第 001 项要先做实际安装与最小调用，固定 AgentScope、Python 和依赖版本。后续只参照**锁定版本**的[AgentScope 官方文档](https://docs.agentscope.io/)与本地 API。不要把旧版 `doc.agentscope.io/tutorial/` 的 `ReActAgent`/`formatter` 示例混进 2.x 实现。
 
-第 001 项建议先写一个终端中的 `Agent` + `FunctionTool` 最小例子，之后才接 HTTP、数据库与多 Agent。AgentScope 2.x 官方[项目首页](https://github.com/agentscope-ai/agentscope)和[Agent 文档](https://docs.agentscope.io/latest/en/building-blocks/agent/overview)提供入口；官方示例的 Bash/文件工具只是演示，GoGo 差旅 Agent 不应因此获得无关的本地命令权限。
+第 001 项建议先写一个终端中的 `Agent` + `FunctionTool` 最小例子，之后才接 HTTP、数据库与多 Agent。AgentScope 2.x 官方[项目首页](https://github.com/agentscope-ai/agentscope)和[文档首页](https://docs.agentscope.io/)提供入口；阅读时切到第 001 项锁定的版本。官方示例的 Bash/文件工具只是演示，GoGo 差旅 Agent 不应因此获得无关的本地命令权限。
