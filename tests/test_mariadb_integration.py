@@ -11,6 +11,7 @@ import pytest
 from sqlalchemy import select, text
 from gogo_agent.db.session import get_session_factory
 from gogo_agent.db.models import UserAccountModel
+from gogo_agent.db.init_db import init_database
 from gogo_agent.auth.repository import SQLUserAccountRepository
 from gogo_agent.auth.service import AuthService
 from gogo_agent.auth.security import TokenManager
@@ -22,6 +23,13 @@ def db_session_factory():
     if not factory:
         pytest.skip("GOGO_DATABASE_URL 未配置，跳过 MariaDB 集成测试。")
     return factory
+
+
+def test_init_database_idempotent():
+    """验证 init_database 幂等执行无异常。"""
+    success = init_database()
+    assert success is True
+
 
 
 def test_mariadb_connection_and_user_query(db_session_factory):

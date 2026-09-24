@@ -5,9 +5,17 @@ from typing import Optional
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from .base import Base
-from .models import UserAccountModel
-from .session import get_engine, get_session_factory
+from pathlib import Path
+
+# 确保在 PyCharm 中直接右键执行脚本时，src 目录在 sys.path 中
+_src_dir = str(Path(__file__).resolve().parents[2])
+if _src_dir not in sys.path:
+    sys.path.insert(0, _src_dir)
+
+from gogo_agent.db.base import Base
+from gogo_agent.db.models import UserAccountModel
+from gogo_agent.db.session import get_engine, get_session_factory
+
 
 
 def init_database(engine: Optional[Engine] = None, seed_users: bool = True) -> bool:
