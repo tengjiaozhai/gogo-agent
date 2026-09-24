@@ -29,6 +29,14 @@
 - [`src/gogo_agent/auth/dependencies.py`](src/gogo_agent/auth/dependencies.py) — 解析 Authorization 请求头并校验服务端 Token 提取可信用户上下文。
 - [`src/gogo_agent/auth/router.py`](src/gogo_agent/auth/router.py) — 定义 /api/auth 下的登录、退出与当前用户信息 HTTP 端点。
 
+## src/gogo_agent/db
+
+- [`src/gogo_agent/db/__init__.py`](src/gogo_agent/db/__init__.py) — 导出数据库 Base、模型类、连接引擎与会话工厂。
+- [`src/gogo_agent/db/base.py`](src/gogo_agent/db/base.py) — 定义统一的 SQLAlchemy DeclarativeBase 声明式基类。
+- [`src/gogo_agent/db/models.py`](src/gogo_agent/db/models.py) — 定义用户账号、会话与消息的 SQLAlchemy ORM 数据模型。
+- [`src/gogo_agent/db/session.py`](src/gogo_agent/db/session.py) — 管理数据库连接池、会话生成及 FastAPI 依赖注入。
+- [`src/gogo_agent/db/init_db.py`](src/gogo_agent/db/init_db.py) — 幂等初始化数据库表结构与填充初始脱敏种子用户。
+
 ## docs
 
 - [`docs/AgentScope-Python-迁移路线图.md`](docs/AgentScope-Python-迁移路线图.md) — 规定从 Java 版 GoGo Agent 迁移到 AgentScope Python 2.x 的长期阶段规划与迁移边界。
@@ -71,3 +79,4 @@
 - [`tests/test_exercises.py`](tests/test_exercises.py) — 验证 000 系列小练习的输入校验、并发性能与 HTTP 端点行为。
 - [`tests/test_001.py`](tests/test_001.py) — 验证 001 配置、日期工具、HTTP 健康检查及模拟模型网关调用链。
 - [`tests/test_004_auth.py`](tests/test_004_auth.py) — 验证 004 登录、登出、用户信息隔离、401 拦截与密码哈希自动迁移。
+- [`tests/test_mariadb_integration.py`](tests/test_mariadb_integration.py) — 验证真实 MariaDB 数据库连接、用户数据查询与密码哈希落库迁移。

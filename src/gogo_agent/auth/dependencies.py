@@ -4,14 +4,18 @@ from typing import Optional
 from fastapi import Depends, Header, HTTPException, status
 
 from .models import UserAccount
+from .repository import create_user_account_repository
 from .service import AuthService
 
-# 默认全局单例实例（支持在测试中覆盖替换）
-_default_auth_service = AuthService()
+# 默认全局单例实例（若配置数据库则自动绑定 MariaDB，否则回退内存）
+_default_auth_service: Optional[AuthService] = None
 
 
 def get_auth_service() -> AuthService:
     """获取全局 AuthService 实例。"""
+    global _default_auth_service
+    if _default_auth_service is None:
+        _default_auth_service = AuthService(repository=create_user_account_repository())
     return _default_auth_service
 
 
