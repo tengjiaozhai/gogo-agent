@@ -18,7 +18,7 @@
 - [`src/gogo_agent/__init__.py`](src/gogo_agent/__init__.py) — 标记 GoGo Agent 的 Python 包。
 - [`src/gogo_agent/cli.py`](src/gogo_agent/cli.py) — 装配仅含日期工具的 Agent 并提供终端入口。
 - [`src/gogo_agent/tools.py`](src/gogo_agent/tools.py) — 提供不依赖模型的本地日期工具。
-- [`src/gogo_agent/api.py`](src/gogo_agent/api.py) — 提供后端唯一 FastAPI 应用入口、挂载认证路由及健康检查。
+- [`src/gogo_agent/api.py`](src/gogo_agent/api.py) — 提供后端唯一 FastAPI 应用入口、挂载认证路由、Scalar 交互式 API 文档及健康检查。
 
 ## src/gogo_agent/auth
 

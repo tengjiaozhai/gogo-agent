@@ -47,6 +47,16 @@ def test_health_without_model_settings(monkeypatch):
     assert response.json() == {"status": "ok", "agentscope_version": "2.0.8"}
 
 
+def test_scalar_docs_endpoint():
+    client = TestClient(app)
+    scalar_resp = client.get("/scalar")
+    assert scalar_resp.status_code == 200
+    doc_resp = client.get("/doc.html", follow_redirects=False)
+    assert doc_resp.status_code == 307
+    assert doc_resp.headers["location"] == "/scalar"
+
+
+
 @pytest.mark.asyncio
 async def test_agent_calls_only_date_tool_then_answers_from_mock_chat_completions_api(monkeypatch):
     requests = []

@@ -3,13 +3,22 @@
 from importlib.metadata import version
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
+from scalar_fastapi import add_scalar_reference
 
 from gogo_agent.auth.router import router as auth_router
 
 app = FastAPI(title="GoGo Agent")
 
 app.include_router(auth_router)
+add_scalar_reference(app, route="/scalar", title="GoGo Agent API 文档")
+
+
+@app.get("/doc.html", include_in_schema=False)
+async def doc_html_redirect() -> RedirectResponse:
+    """兼容习惯 Knife4j (/doc.html) 的开发者，自动重定向至 Scalar 文档。"""
+    return RedirectResponse(url="/scalar")
+
 
 
 @app.exception_handler(HTTPException)
