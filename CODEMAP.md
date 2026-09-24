@@ -18,7 +18,7 @@
 - [`src/gogo_agent/__init__.py`](src/gogo_agent/__init__.py) — 标记 GoGo Agent 的 Python 包。
 - [`src/gogo_agent/cli.py`](src/gogo_agent/cli.py) — 装配仅含日期工具的 Agent 并提供终端入口。
 - [`src/gogo_agent/tools.py`](src/gogo_agent/tools.py) — 提供不依赖模型的本地日期工具。
-- [`src/gogo_agent/api.py`](src/gogo_agent/api.py) — 提供后端唯一 FastAPI 应用入口、挂载认证路由、Scalar 交互式 API 文档及健康检查。
+- [`src/gogo_agent/api.py`](src/gogo_agent/api.py) — 提供后端唯一 FastAPI 应用入口、挂载认证与会话路由、Scalar 交互式 API 文档及健康检查。
 
 ## src/gogo_agent/auth
 
@@ -30,11 +30,21 @@
 - [`src/gogo_agent/auth/dependencies.py`](src/gogo_agent/auth/dependencies.py) — 解析 Authorization 请求头并校验服务端 Token 提取可信用户上下文。
 - [`src/gogo_agent/auth/router.py`](src/gogo_agent/auth/router.py) — 定义 /api/auth 下的登录、退出与当前用户信息 HTTP 端点。
 
+## src/gogo_agent/chat
+
+- [`src/gogo_agent/chat/__init__.py`](src/gogo_agent/chat/__init__.py) — 导出会话消息服务、执行器与路由入口。
+- [`src/gogo_agent/chat/models.py`](src/gogo_agent/chat/models.py) — 定义会话、消息领域模型及请求响应视图 DTO。
+- [`src/gogo_agent/chat/repository.py`](src/gogo_agent/chat/repository.py) — 实现 L1 业务历史（内存与 SQL）及 L2 AgentState 状态（agentscope_session）仓储。
+- [`src/gogo_agent/chat/service.py`](src/gogo_agent/chat/service.py) — 编排会话惰性创建、消息归属鉴权校验、标题自动提取及点赞反馈。
+- [`src/gogo_agent/chat/executor.py`](src/gogo_agent/chat/executor.py) — 驱动 AgentScope 智能体推理、跨轮次恢复/保存 AgentState 并支持 SSE 流式与 JSON 输出。
+- [`src/gogo_agent/chat/dependencies.py`](src/gogo_agent/chat/dependencies.py) — 提供会话仓储、L2 记忆库与执行器的 FastAPI 依赖注入。
+- [`src/gogo_agent/chat/router.py`](src/gogo_agent/chat/router.py) — 定义 /api/chat 下的会话增删查、历史消息获取、标题更新及反馈端点。
+
 ## src/gogo_agent/db
 
 - [`src/gogo_agent/db/__init__.py`](src/gogo_agent/db/__init__.py) — 导出数据库 Base、模型类、连接引擎与会话工厂。
 - [`src/gogo_agent/db/base.py`](src/gogo_agent/db/base.py) — 定义统一的 SQLAlchemy DeclarativeBase 声明式基类。
-- [`src/gogo_agent/db/models.py`](src/gogo_agent/db/models.py) — 定义用户账号、会话与消息的 SQLAlchemy ORM 数据模型。
+- [`src/gogo_agent/db/models.py`](src/gogo_agent/db/models.py) — 定义用户账号、会话、消息及 agentscope_session 内部状态的 SQLAlchemy ORM 数据模型。
 - [`src/gogo_agent/db/session.py`](src/gogo_agent/db/session.py) — 管理数据库连接池、会话生成及 FastAPI 依赖注入。
 - [`src/gogo_agent/db/init_db.py`](src/gogo_agent/db/init_db.py) — 幂等初始化数据库表结构与填充初始脱敏种子用户。
 
@@ -80,4 +90,6 @@
 - [`tests/test_exercises.py`](tests/test_exercises.py) — 验证 000 系列小练习的输入校验、并发性能与 HTTP 端点行为。
 - [`tests/test_001.py`](tests/test_001.py) — 验证 001 配置、日期工具、HTTP 健康检查及模拟模型网关调用链。
 - [`tests/test_004_auth.py`](tests/test_004_auth.py) — 验证 004 登录、登出、用户信息隔离、401 拦截与密码哈希自动迁移。
-- [`tests/test_mariadb_integration.py`](tests/test_mariadb_integration.py) — 验证真实 MariaDB 数据库连接、用户数据查询与密码哈希落库迁移。
+- [`tests/test_005_chat.py`](tests/test_005_chat.py) — 验证 005 会话与消息持久化、AgentState 记忆跨重启恢复、用户隔离 403 拦截与 SSE 输出。
+- [`tests/test_mariadb_integration.py`](tests/test_mariadb_integration.py) — 验证真实 MariaDB 数据库连接、用户密码迁移、会话消息与 agentscope_session 存取。
+

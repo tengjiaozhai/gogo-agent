@@ -6,6 +6,7 @@
 3. 验证端到端从数据库登录认证并成功返回 Token 与用户信息。
 """
 
+from datetime import datetime, timezone
 import os
 import pytest
 from sqlalchemy import select, text
@@ -81,3 +82,74 @@ def test_mariadb_transparent_password_hash_migration(db_session_factory):
     # 4. 再次使用原密码 '123456' 登录，验证通过
     token_second = auth_service.login("david", "123456")
     assert token_second is not None
+
+
+def test_mariadb_chat_history_and_agent_session(db_session_factory):
+    """验证真实 MariaDB 数据库上 chat_conversation, chat_message 和 agentscope_session 的完整持久化链路。"""
+    from gogo_agent.chat.repository import SQLChatHistoryRepository, SQLAgentSessionStore
+    from gogo_agent.chat.models import ChatConversation, ChatMessage
+    from agentscope.state import AgentState
+
+    chat_repo = SQLChatHistoryRepository(session_factory=db_session_factory)
+    session_store = SQLAgentSessionStore(session_factory=db_session_factory)
+
+    test_session_id = "mariadb_e2e_session_005"
+    test_user_id = "u001"
+
+    # 1. 保存会话
+    conv = ChatConversation(
+        conversation_id=test_session_id,
+        user_id=test_user_id,
+        title="MariaDB持久化验证会话",
+    )
+    chat_repo.save_conversation(conv)
+
+    # 2. 查询会话
+    queried_conv = chat_repo.find_conversation_by_id(test_session_id)
+    assert queried_conv is not None
+    assert queried_conv.title == "MariaDB持久化验证会话"
+    assert queried_conv.user_id == test_user_id
+
+    # 3. 保存并查询消息
+    msg1 = ChatMessage(
+        message_id="msg_mariadb_001",
+        conversation_id=test_session_id,
+        role="user",
+        content="在 MariaDB 中持久化用户消息",
+    )
+    msg2 = ChatMessage(
+        message_id="msg_mariadb_002",
+        conversation_id=test_session_id,
+        role="agent",
+        content="在 MariaDB 中持久化助手回复",
+        agent_name="GoGo",
+    )
+    chat_repo.save_message(msg1)
+    chat_repo.save_message(msg2)
+
+    msgs = chat_repo.find_messages_by_conversation_id(test_session_id)
+    assert len(msgs) >= 2
+    assert msgs[-2].content == "在 MariaDB 中持久化用户消息"
+    assert msgs[-1].content == "在 MariaDB 中持久化助手回复"
+
+    # 4. 反馈更新
+    chat_repo.update_feedback("msg_mariadb_002", "LIKE", datetime.now(timezone.utc))
+    updated_msg = chat_repo.find_message_by_id("msg_mariadb_002")
+    assert updated_msg is not None
+    assert updated_msg.feedback == "LIKE"
+
+    # 5. L2 AgentState 存取验证
+    state = AgentState(session_id=test_session_id)
+    state.append_context("user", [{"type": "text", "text": "用户上下文测试"}])
+    session_store.save_agent_state(test_session_id, state, agent_name="GoGo")
+
+    loaded_state = session_store.load_agent_state(test_session_id, agent_name="GoGo")
+    assert loaded_state is not None
+    assert loaded_state.session_id == test_session_id
+    assert len(loaded_state.context) == 1
+    assert loaded_state.context[0].content[0].text == "用户上下文测试"
+
+    # 6. 逻辑删除验证
+    chat_repo.delete_conversation(test_session_id)
+    assert chat_repo.find_conversation_by_id(test_session_id) is None
+

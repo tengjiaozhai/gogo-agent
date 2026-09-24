@@ -7,10 +7,12 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from scalar_fastapi import add_scalar_reference
 
 from gogo_agent.auth.router import router as auth_router
+from gogo_agent.chat.router import router as chat_router
 
 app = FastAPI(title="GoGo Agent")
 
 app.include_router(auth_router)
+app.include_router(chat_router)
 add_scalar_reference(app, route="/scalar", title="GoGo Agent API 文档")
 
 

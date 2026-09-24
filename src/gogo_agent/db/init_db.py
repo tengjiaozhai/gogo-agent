@@ -33,7 +33,22 @@ def init_database(engine: Optional[Engine] = None, seed_users: bool = True) -> b
     print(f"[DB] 正在连接目标数据库初始化表结构: {eng.url.render_as_string(hide_password=True)}")
     # 创建所有注册在 Base 上的表
     Base.metadata.create_all(bind=eng)
-    print("[DB] 表结构创建/检查完成 (user_account, chat_conversation, chat_message)。")
+    
+    # 确保 chat_message 表中存在 extra, feedback, feedback_at 字段 (兼容已有环境)
+    from sqlalchemy import text
+    with eng.connect() as conn:
+        for col_ddl in [
+            "ALTER TABLE chat_message ADD COLUMN IF NOT EXISTS extra TEXT NULL",
+            "ALTER TABLE chat_message ADD COLUMN IF NOT EXISTS feedback VARCHAR(16) NULL",
+            "ALTER TABLE chat_message ADD COLUMN IF NOT EXISTS feedback_at DATETIME NULL",
+        ]:
+            try:
+                conn.execute(text(col_ddl))
+                conn.commit()
+            except Exception:
+                pass
+
+    print("[DB] 表结构创建/检查完成 (user_account, chat_conversation, chat_message, agentscope_session)。")
 
     if seed_users:
         factory = get_session_factory()
