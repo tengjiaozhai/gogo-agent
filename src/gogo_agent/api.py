@@ -28,3 +28,10 @@ async def http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "agentscope_version": version("agentscope")}
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run("gogo_agent.api:app", host="127.0.0.1", port=8000, reload=True)
+

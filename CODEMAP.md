@@ -11,6 +11,7 @@
 - [`uv.lock`](uv.lock) — 固定 001 已解析的 Python 依赖版本以供重复安装。
 - [`README.md`](README.md) — 说明安装、终端 Agent、FastAPI 健康检查和测试命令。
 - [`.env.example`](.env.example) — 列出 001 模型网关所需的环境变量名。
+- [`main.py`](main.py) — 根目录便捷入口，供 PyCharm 右键一键运行或调试 API 后台。
 
 ## src/gogo_agent
 
