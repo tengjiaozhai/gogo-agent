@@ -1,13 +1,21 @@
 [project]
 name = "gogo-agent"
 version = "0.1.0"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.13"
 dependencies = [
-    "agentscope>=2.0.8",
+    "agentscope==2.0.8",
     "fastapi>=0.141.0",
     "uvicorn>=0.53.0",
     "pydantic>=2.13.0",
     "httpx>=0.28.0",
     "pytest>=9.1.0",
     "pytest-asyncio>=1.4.0",
+    "python-dotenv>=1.2.3",
 ]
+
+[project.scripts]
+gogo-agent = "gogo_agent.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

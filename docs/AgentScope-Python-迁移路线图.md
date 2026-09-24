@@ -20,7 +20,7 @@
 
 - Java 源项目使用 Spring Boot、AgentScope Java、MyBatis-Plus、MySQL、Redis、Sa-Token、WebFlux。当前请求主链是 `ChatController → ChatAgentExecutor → AgentPipelineService → 快速意图识别/条件改写 → MasterAgent → 子 Agent`；同一会话的继续消息还可能直接续跑活跃 Agent。`AgentPipelineService.dispatchByIntent` 中的“高置信单意图直跳”代码目前被注释，不能按 README 将其视为现行路径。
 - README 声称有 9 个 ReActAgent，实际 `ReActAgent.builder` 只在 Master、行程管理、规划、审核、预订、信息 Agent 中出现；其中独立的 `ItineraryReviewAgent` 已标 `@Deprecated`，当前规划路径调用 `ItineraryReviewTools.review_itinerary`。问题改写和意图识别是 `AgentBase` 的单次模型调用，报销 Agent 的 `build()` 仍返回 `null`。迁移清单必须按源码逐一确认。
-- 当前 Python 工作区只有 IDE 示例 `main.py` 和无依赖的 `pyproject.toml`，其中声明 `requires-python = ">=3.14"`；现有 `.venv` 是 Python 3.14.0，尚未安装 AgentScope。第 001 步要对选定 AgentScope Python 版本、Python 运行时和数据库驱动做实际安装与最小调用验证，再锁定版本；不要先假定 3.14 兼容。
+- 第 001 步已将 IDE 示例入口替换为 `gogo_agent` 包：当前 `.venv` 是 Python 3.12.13，已安装并锁定 AgentScope Python 2.0.8；本地模拟和真实模型网关均已完成最小 Agent/Tool 调用。数据库驱动在后续实际需要时再选型和验证。
 - 以 **AgentScope Python 2.x** 为学习与迁移目标。官方说明 2.x 与 1.x 有破坏性差异；禁止把旧版 `doc.agentscope.io/tutorial/` 中的 `ReActAgent(..., formatter=...)`、`register_tool_function` 示例直接照搬。当前 2.x 的核心概念是 `Agent`、`Toolkit`、`FunctionTool`、状态与事件；用第 001 步锁定版本的[官方文档](https://docs.agentscope.io/)和实际安装包确认 API。
 - 初步选择 **FastAPI 薄接口层 + AgentScope 2.x SDK + 项目自己的业务服务和仓储**，用于保持现有 REST/SSE 契约。第 003 步要与 AgentScope 自带 Agent Service 做一次小型对照；其示例服务不自带最终用户认证，不能仅靠占位 `X-User-ID` 上线。无论选哪条路径，模型生成的 `userId`、审批结论和订单写入都不能绕过服务端鉴权。
 - 暂沿用现有业务数据语义和外部系统契约。业务表可在第 003/005 步评估复用；AgentScope Java 的 `MysqlSession`、挂起工具状态与 AgentScope Python 的状态格式不能假定兼容，需明确读取/转换边界。是否迁移历史生产数据、是否切换 AgentScope 自带服务，要在核对契约后单独决策；本计划不预设破坏性数据迁移。
@@ -202,7 +202,7 @@
 
 ## 待核对的关键事实
 
-1. `pyproject.toml` 当前要求 Python 3.14；AgentScope Python 与全部数据库/模型依赖的真实兼容范围要以安装和 smoke test 确认。
+1. `pyproject.toml` 当前限定 Python 3.12，AgentScope Python 锁定 2.0.8；当前仅验证 001 所用依赖与测试网关。后续数据库驱动及业务网关仍需按对应编号验证。
 2. Java README 与 `开发进展.md` 对 BookingAgent 位置、工具/Skill 清单等表述不完全一致；README 还把未生效的单意图直跳和已弃用的独立审核 Agent 写成现行策略，并高估 ReActAgent 数量。迁移时以运行时装配和测试为准。
 3. Java README 将报销 Agent 和 A2A 列为未完成/待办。后续若要把它们变成 Python 新功能，需要另定验收标准，不作为 Java 功能等价迁移的阻塞项。
 4. 当前尚未核实生产数据迁移与现有前端对 Python API 的逐字段兼容；第 002/003 步建立契约样本，第 098/102 步完成联调验收。

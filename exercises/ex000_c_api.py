@@ -7,12 +7,23 @@
 """
 
 import asyncio
+import sys
+from pathlib import Path
 from fastapi import FastAPI, HTTPException, status
 from fastapi.responses import JSONResponse
 import httpx
 from httpx import ASGITransport
 
-from exercises.ex000_a_types import TravelRequest
+# 保证无论在项目根目录还是进入 exercises 目录运行，均能正确解析模块路径
+_ROOT = str(Path(__file__).resolve().parent.parent)
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
+try:
+    from exercises.ex000_a_types import TravelRequest
+except ModuleNotFoundError:
+    from ex000_a_types import TravelRequest
+
 
 app = FastAPI(title="GoGo Travel Mini API", version="0.1.0")
 
@@ -76,4 +87,20 @@ async def run_demo_client():
 
 
 if __name__ == "__main__":
-    asyncio.run(run_demo_client())
+    import sys
+
+    # 支持像 Spring Boot 一样启动真实 Web 服务并查看接口文档：
+    # 方式 1: python3 -m exercises.ex000_c_api --server
+    # 方式 2: uvicorn exercises.ex000_c_api:app --reload --port 8000
+    if "--server" in sys.argv or "-s" in sys.argv:
+        import uvicorn
+
+        print("🚀 正在启动 GoGo Travel API (类似 Spring Boot 内嵌容器)...")
+        print("📖 Swagger UI 交互式文档: http://127.0.0.1:8000/docs")
+        print("📖 ReDoc 结构化文档:       http://127.0.0.1:8000/redoc")
+        print("📖 OpenAPI 原生 JSON:      http://127.0.0.1:8000/openapi.json\n")
+        uvicorn.run("exercises.ex000_c_api:app", host="127.0.0.1", port=8000, reload=True, app_dir=_ROOT)
+    else:
+        # 默认模式：无需端口占用的内存级快速测试
+        asyncio.run(run_demo_client())
+
