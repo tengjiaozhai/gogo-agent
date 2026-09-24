@@ -24,7 +24,7 @@
 
 - [`src/gogo_agent/auth/__init__.py`](src/gogo_agent/auth/__init__.py) — 导出登录认证数据模型、依赖注入函数与核心服务。
 - [`src/gogo_agent/auth/models.py`](src/gogo_agent/auth/models.py) — 定义用户账户模型以及登录、登出、用户信息的请求响应模式。
-- [`src/gogo_agent/auth/security.py`](src/gogo_agent/auth/security.py) — 实现 PBKDF2 密码哈希安全校验、旧明文自动升级迁移与服务端 Token 会话管理。
+- [`src/gogo_agent/auth/security.py`](src/gogo_agent/auth/security.py) — 实现 PBKDF2 密码哈希安全校验、旧明文自动升级迁移与基于 Redis / 内存的 30 天跨会话 Token 管理。
 - [`src/gogo_agent/auth/repository.py`](src/gogo_agent/auth/repository.py) — 提供用户账户查询、密码哈希更新及预置测试账号数据。
 - [`src/gogo_agent/auth/service.py`](src/gogo_agent/auth/service.py) — 编排用户登录验证、会话注销及密码透明哈希迁移。
 - [`src/gogo_agent/auth/dependencies.py`](src/gogo_agent/auth/dependencies.py) — 解析 Authorization 请求头并校验服务端 Token 提取可信用户上下文。
@@ -92,4 +92,5 @@
 - [`tests/test_004_auth.py`](tests/test_004_auth.py) — 验证 004 登录、登出、用户信息隔离、401 拦截与密码哈希自动迁移。
 - [`tests/test_005_chat.py`](tests/test_005_chat.py) — 验证 005 会话与消息持久化、AgentState 记忆跨重启恢复、用户隔离 403 拦截与 SSE 输出。
 - [`tests/test_mariadb_integration.py`](tests/test_mariadb_integration.py) — 验证真实 MariaDB 数据库连接、用户密码迁移、会话消息与 agentscope_session 存取。
+- [`tests/test_redis_integration.py`](tests/test_redis_integration.py) — 验证真实 172.22.22.123 Redis 连接、30 天 TTL、跨实例 Token 持久化与平滑降级。
 

@@ -5,7 +5,7 @@ import hmac
 import os
 import secrets
 import time
-from typing import Optional
+from typing import Optional, Protocol
 
 
 class PasswordManager:
@@ -58,21 +58,134 @@ class PasswordManager:
             return is_valid, needs_upgrade
 
 
+class TokenStoreProtocol(Protocol):
+    """Token 会话存储契约接口。"""
+
+    def save_token(self, token: str, user_id: str, ttl_seconds: int) -> None:
+        """存储 Token 与用户 ID 映射并设置有效期 (TTL)。"""
+        ...
+
+    def get_user_id(self, token: str) -> Optional[str]:
+        """查询 Token 对应的用户 ID，若不存在或已过期返回 None。"""
+        ...
+
+    def revoke_token(self, token: str) -> bool:
+        """主动注销/撤销指定的 Token。"""
+        ...
+
+
+class InMemoryTokenStore:
+    """内存 Token 存储实现（用于轻量单测与无 Redis 环境备用）。"""
+
+    def __init__(self):
+        self._tokens: dict[str, dict] = {}
+        self._revoked: set[str] = set()
+
+    def save_token(self, token: str, user_id: str, ttl_seconds: int) -> None:
+        self._tokens[token] = {
+            "user_id": user_id,
+            "expires_at": time.time() + ttl_seconds,
+        }
+        self._revoked.discard(token)
+
+    def get_user_id(self, token: str) -> Optional[str]:
+        if not token or token in self._revoked:
+            return None
+        session = self._tokens.get(token)
+        if not session:
+            return None
+        if time.time() > session["expires_at"]:
+            self._tokens.pop(token, None)
+            return None
+        return session["user_id"]
+
+    def revoke_token(self, token: str) -> bool:
+        existed = token in self._tokens
+        self._tokens.pop(token, None)
+        self._revoked.add(token)
+        return existed
+
+
+class RedisTokenStore:
+    """基于 Redis 的跨会话持久化 Token 存储。"""
+
+    def __init__(
+        self,
+        host: str = "172.22.22.123",
+        port: int = 6379,
+        db: int = 0,
+        password: Optional[str] = None,
+        prefix: str = "gogo:auth:token:",
+        socket_timeout: float = 3.0,
+    ):
+        import redis
+        self.host = host
+        self.port = port
+        self.prefix = prefix
+        self._client = redis.Redis(
+            host=host,
+            port=port,
+            db=db,
+            password=password or None,
+            socket_timeout=socket_timeout,
+            decode_responses=True,
+        )
+
+    def ping(self) -> bool:
+        """探活 Redis 节点连接。"""
+        try:
+            return bool(self._client.ping())
+        except Exception:
+            return False
+
+    def save_token(self, token: str, user_id: str, ttl_seconds: int) -> None:
+        """存储 Token 并设置指定 TTL 过期时间（秒）。"""
+        self._client.set(f"{self.prefix}{token}", user_id, ex=ttl_seconds)
+
+    def get_user_id(self, token: str) -> Optional[str]:
+        """获取 Token 对应的用户 ID，若不存在或已过期返回 None。"""
+        if not token:
+            return None
+        try:
+            val = self._client.get(f"{self.prefix}{token}")
+            return str(val) if val is not None else None
+        except Exception:
+            return None
+
+    def revoke_token(self, token: str) -> bool:
+        """主动从 Redis 中删除指定的 Token。"""
+        if not token:
+            return False
+        try:
+            return bool(self._client.delete(f"{self.prefix}{token}") > 0)
+        except Exception:
+            return False
+
+
 class TokenManager:
-    """服务端 Token 生成、有效性校验与主动撤销管理。"""
+    """服务端 Token 生成、有效性校验与跨会话持久化管理。"""
 
-    def __init__(self, secret_key: Optional[str] = None):
+    DEFAULT_TTL_SECONDS = 30 * 24 * 3600  # 默认有效期 30 天 (2,592,000 秒)
+
+    def __init__(
+        self,
+        secret_key: Optional[str] = None,
+        store: Optional[TokenStoreProtocol] = None,
+        default_ttl_seconds: int = DEFAULT_TTL_SECONDS,
+    ):
         self._secret_key = secret_key or os.environ.get("GOGO_AUTH_SECRET_KEY") or secrets.token_hex(32)
-        # 内存存储活跃 Token 会话: token -> {"user_id": str, "expires_at": float}
-        self._active_tokens: dict[str, dict] = {}
-        # 已撤销（黑名单）Token 缓存
-        self._revoked_tokens: set[str] = set()
+        self._store: TokenStoreProtocol = store or InMemoryTokenStore()
+        self._default_ttl = default_ttl_seconds
 
-    def create_token(self, user_id: str, ttl_seconds: int = 86400) -> str:
-        """为指定用户生成唯一加密令牌并记录会话有效期。"""
+    @property
+    def store(self) -> TokenStoreProtocol:
+        """获取当前绑定的底层 Token 存储器。"""
+        return self._store
+
+    def create_token(self, user_id: str, ttl_seconds: Optional[int] = None) -> str:
+        """为指定用户生成唯一加密令牌并记录会话有效期 (默认 30 天)。"""
         raw_id = secrets.token_urlsafe(32)
         now = time.time()
-        expires_at = now + ttl_seconds
         payload = f"{user_id}:{now}:{raw_id}"
         signature = hmac.new(
             self._secret_key.encode("utf-8"),
@@ -81,35 +194,52 @@ class TokenManager:
         ).hexdigest()
         token = f"tk_{raw_id}_{signature[:16]}"
 
-        self._active_tokens[token] = {
-            "user_id": user_id,
-            "expires_at": expires_at,
-        }
+        ttl = ttl_seconds if ttl_seconds is not None else self._default_ttl
+        self._store.save_token(token, user_id, ttl)
         return token
 
     def verify_token(self, token: str) -> Optional[str]:
         """验证 Token 有效性。
 
-        若 Token 存在且未过期、未被主动销毁，返回关联的 user_id；否则返回 None。
+        若 Token 存在且未过期、未被主动注销，返回关联的 user_id；否则返回 None。
         """
-        if not token or token in self._revoked_tokens:
+        if not token:
             return None
-
-        session = self._active_tokens.get(token)
-        if not session:
-            return None
-
-        # 检查是否过期
-        if time.time() > session["expires_at"]:
-            self._active_tokens.pop(token, None)
-            return None
-
-        return session["user_id"]
+        return self._store.get_user_id(token)
 
     def revoke_token(self, token: str) -> bool:
         """主动注销（退出登录）Token。"""
-        if token in self._active_tokens:
-            self._active_tokens.pop(token)
-            self._revoked_tokens.add(token)
-            return True
-        return False
+        if not token:
+            return False
+        return self._store.revoke_token(token)
+
+
+def create_token_manager(prefer_redis: bool = True) -> TokenManager:
+    """根据环境变量配置工厂方法创建 TokenManager，优先尝试连接 Redis 实现跨会话持久化。
+
+    - 默认连接 172.22.22.123:6379 (无密码, DB 0)
+    - 默认过期时间为 30 天 (2,592,000 秒)
+    - 若 Redis 不可用或无法连接，自动平滑回退到 InMemoryTokenStore
+    """
+    ttl = int(os.environ.get("GOGO_AUTH_TOKEN_TTL_SECONDS", str(TokenManager.DEFAULT_TTL_SECONDS)))
+    secret = os.environ.get("GOGO_AUTH_SECRET_KEY")
+
+    if prefer_redis:
+        redis_host = os.environ.get("GOGO_REDIS_HOST", "172.22.22.123").strip()
+        redis_port = int(os.environ.get("GOGO_REDIS_PORT", "6379").strip())
+        redis_db = int(os.environ.get("GOGO_REDIS_DB", "0").strip())
+        redis_password = os.environ.get("GOGO_REDIS_PASSWORD", "").strip() or None
+        if redis_host:
+            try:
+                redis_store = RedisTokenStore(
+                    host=redis_host,
+                    port=redis_port,
+                    db=redis_db,
+                    password=redis_password,
+                )
+                if redis_store.ping():
+                    return TokenManager(secret_key=secret, store=redis_store, default_ttl_seconds=ttl)
+            except Exception:
+                pass
+
+    return TokenManager(secret_key=secret, store=InMemoryTokenStore(), default_ttl_seconds=ttl)

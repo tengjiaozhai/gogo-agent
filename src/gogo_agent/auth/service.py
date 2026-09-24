@@ -3,7 +3,7 @@
 from typing import Optional
 from .models import UserAccount
 from .repository import UserAccountRepository
-from .security import PasswordManager, TokenManager
+from .security import PasswordManager, TokenManager, create_token_manager
 
 
 class AuthService:
@@ -15,7 +15,7 @@ class AuthService:
         token_manager: Optional[TokenManager] = None,
     ):
         self.repository = repository or UserAccountRepository()
-        self.token_manager = token_manager or TokenManager()
+        self.token_manager = token_manager or create_token_manager()
 
     def login(self, username: str, plain_password: str) -> str:
         """用户登录校验。
