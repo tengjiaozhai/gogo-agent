@@ -1,6 +1,6 @@
-# GoGo Agent：001 启动练习
+# GoGo Agent：启动与 HTTP 入口
 
-本仓库正在按 [学习路线](docs/学习路线/README.md) 从 Java 版迁移到 AgentScope Python。001 目前提供最小终端 Agent、只读日期工具和无凭证健康检查；登录、会话等功能属于后续编号。
+本仓库正在按 [学习路线](docs/学习路线/README.md) 从 Java 版迁移到 AgentScope Python。001 提供最小终端 Agent 和只读日期工具；003 已确立 FastAPI 服务入口及无凭证健康检查。登录、会话等功能属于后续编号。
 
 ## 环境与启动
 
@@ -31,10 +31,10 @@ uv run --locked gogo-agent
 ## HTTP 健康检查与测试
 
 ```sh
-uv run --locked uvicorn gogo_agent.health:app --host 127.0.0.1 --port 8000
+uv run --locked uvicorn gogo_agent.api:app --host 127.0.0.1 --port 8000
 ```
 
-访问 `http://127.0.0.1:8000/health` 得到 `status` 和 AgentScope 版本。该端点只证明进程和依赖可用，不检查模型网关。
+访问 `http://127.0.0.1:8000/health` 得到 `status` 和 AgentScope 版本。该端点只证明进程和依赖可用，不检查模型网关。003 的架构和后续 HTTP 路由见[整体架构与入口记录](docs/架构/003-整体架构与HTTP入口.md)。
 
 ```sh
 uv run --locked pytest -q tests/test_001.py

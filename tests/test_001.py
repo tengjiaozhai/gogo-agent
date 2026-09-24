@@ -10,7 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from gogo_agent.cli import ask, build_agent
-from gogo_agent.health import app
+from gogo_agent.api import app
 from gogo_agent.tools import get_current_date
 
 

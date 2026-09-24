@@ -1,0 +1,30 @@
+"""Authoritative HTTP entry for the GoGo Agent backend."""
+
+from importlib.metadata import version
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
+
+from gogo_agent.auth.router import router as auth_router
+
+app = FastAPI(title="GoGo Agent")
+
+app.include_router(auth_router)
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse:
+    """统一 HTTP 异常响应结构，兼容原前端 code 与 message 字段解析。"""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "code": exc.status_code,
+            "message": exc.detail,
+            "detail": exc.detail,
+        },
+    )
+
+
+@app.get("/health")
+def health() -> dict[str, str]:
+    return {"status": "ok", "agentscope_version": version("agentscope")}

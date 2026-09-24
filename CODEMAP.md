@@ -9,7 +9,7 @@
 - [`.python-version`](.python-version) — 指定已验证的 Python 3.12.13 运行时。
 - [`pyproject.toml`](pyproject.toml) — 定义 Python 项目元数据、运行时版本要求及依赖配置。
 - [`uv.lock`](uv.lock) — 固定 001 已解析的 Python 依赖版本以供重复安装。
-- [`README.md`](README.md) — 说明 001 的安装、终端 Agent、健康检查和测试命令。
+- [`README.md`](README.md) — 说明安装、终端 Agent、FastAPI 健康检查和测试命令。
 - [`.env.example`](.env.example) — 列出 001 模型网关所需的环境变量名。
 
 ## src/gogo_agent
@@ -17,11 +17,29 @@
 - [`src/gogo_agent/__init__.py`](src/gogo_agent/__init__.py) — 标记 GoGo Agent 的 Python 包。
 - [`src/gogo_agent/cli.py`](src/gogo_agent/cli.py) — 装配仅含日期工具的 Agent 并提供终端入口。
 - [`src/gogo_agent/tools.py`](src/gogo_agent/tools.py) — 提供不依赖模型的本地日期工具。
-- [`src/gogo_agent/health.py`](src/gogo_agent/health.py) — 提供不依赖模型凭证的 HTTP 健康检查。
+- [`src/gogo_agent/api.py`](src/gogo_agent/api.py) — 提供后端唯一 FastAPI 应用入口、挂载认证路由及健康检查。
+
+## src/gogo_agent/auth
+
+- [`src/gogo_agent/auth/__init__.py`](src/gogo_agent/auth/__init__.py) — 导出登录认证数据模型、依赖注入函数与核心服务。
+- [`src/gogo_agent/auth/models.py`](src/gogo_agent/auth/models.py) — 定义用户账户模型以及登录、登出、用户信息的请求响应模式。
+- [`src/gogo_agent/auth/security.py`](src/gogo_agent/auth/security.py) — 实现 PBKDF2 密码哈希安全校验、旧明文自动升级迁移与服务端 Token 会话管理。
+- [`src/gogo_agent/auth/repository.py`](src/gogo_agent/auth/repository.py) — 提供用户账户查询、密码哈希更新及预置测试账号数据。
+- [`src/gogo_agent/auth/service.py`](src/gogo_agent/auth/service.py) — 编排用户登录验证、会话注销及密码透明哈希迁移。
+- [`src/gogo_agent/auth/dependencies.py`](src/gogo_agent/auth/dependencies.py) — 解析 Authorization 请求头并校验服务端 Token 提取可信用户上下文。
+- [`src/gogo_agent/auth/router.py`](src/gogo_agent/auth/router.py) — 定义 /api/auth 下的登录、退出与当前用户信息 HTTP 端点。
 
 ## docs
 
 - [`docs/AgentScope-Python-迁移路线图.md`](docs/AgentScope-Python-迁移路线图.md) — 规定从 Java 版 GoGo Agent 迁移到 AgentScope Python 2.x 的长期阶段规划与迁移边界。
+
+## docs/契约样例
+
+- [`docs/契约样例/002-用户旅程静态契约.md`](docs/契约样例/002-用户旅程静态契约.md) — 记录 Java 版登录、对话、差旅、规划、审核、审批与预订的脱敏静态契约及风险边界。
+
+## docs/架构
+
+- [`docs/架构/003-整体架构与HTTP入口.md`](docs/架构/003-整体架构与HTTP入口.md) — 记录 Java 请求链、Python 目标调用图、HTTP 入口取舍及 Java→Python 接口映射。
 
 ## docs/学习路线
 
@@ -51,4 +69,5 @@
 
 - [`tests/__init__.py`](tests/__init__.py) — 标记测试目录为 Python 包。
 - [`tests/test_exercises.py`](tests/test_exercises.py) — 验证 000 系列小练习的输入校验、并发性能与 HTTP 端点行为。
-- [`tests/test_001.py`](tests/test_001.py) — 验证 001 配置、日期工具、健康检查及模拟模型网关调用链。
+- [`tests/test_001.py`](tests/test_001.py) — 验证 001 配置、日期工具、HTTP 健康检查及模拟模型网关调用链。
+- [`tests/test_004_auth.py`](tests/test_004_auth.py) — 验证 004 登录、登出、用户信息隔离、401 拦截与密码哈希自动迁移。
