@@ -16,7 +16,7 @@ class ChatHistoryRepositoryProtocol(Protocol):
     def update_title(self, conversation_id: str, title: str) -> bool: ...
     def delete_conversation(self, conversation_id: str) -> bool: ...
     def delete_messages_by_conversation_id(self, conversation_id: str) -> int: ...
-    def find_messages_by_conversation_id(self, conversation_id: str) -> list[ChatMessage]: ...
+    def find_messages_by_conversation_id(self, conversation_id: str, limit: Optional[int] = None) -> list[ChatMessage]: ...
     def find_message_by_id(self, message_id: str) -> Optional[ChatMessage]: ...
     def save_message(self, message: ChatMessage) -> None: ...
     def update_feedback(
@@ -85,13 +85,15 @@ class InMemoryChatHistoryRepository:
                 count += 1
         return count
 
-    def find_messages_by_conversation_id(self, conversation_id: str) -> list[ChatMessage]:
+    def find_messages_by_conversation_id(self, conversation_id: str, limit: Optional[int] = None) -> list[ChatMessage]:
+        if limit is not None and limit < 1:
+            raise ValueError("消息数量上限必须大于零")
         msgs = [
             m for m in self._messages.values()
             if m.conversation_id == conversation_id and m.deleted == 0
         ]
-        msgs.sort(key=lambda x: x.created_at)
-        return msgs
+        msgs.sort(key=lambda x: (x.created_at, x.message_id))
+        return msgs[-limit:] if limit is not None else msgs
 
     def find_message_by_id(self, message_id: str) -> Optional[ChatMessage]:
         m = self._messages.get(message_id)
@@ -296,10 +298,12 @@ class SQLChatHistoryRepository:
             session.commit()
             return res.rowcount
 
-    def find_messages_by_conversation_id(self, conversation_id: str) -> list[ChatMessage]:
+    def find_messages_by_conversation_id(self, conversation_id: str, limit: Optional[int] = None) -> list[ChatMessage]:
+        if limit is not None and limit < 1:
+            raise ValueError("消息数量上限必须大于零")
         if not self._session_factory:
             return []
-        from sqlalchemy import asc, select
+        from sqlalchemy import asc, desc, select
         from gogo_agent.db.models import ChatMessageModel
 
         with self._session_factory() as session:
@@ -309,9 +313,14 @@ class SQLChatHistoryRepository:
                     ChatMessageModel.conversation_id == conversation_id,
                     ChatMessageModel.deleted == 0,
                 )
-                .order_by(asc(ChatMessageModel.created_at))
             )
+            if limit is None:
+                stmt = stmt.order_by(asc(ChatMessageModel.created_at), asc(ChatMessageModel.message_id))
+            else:
+                stmt = stmt.order_by(desc(ChatMessageModel.created_at), desc(ChatMessageModel.message_id)).limit(limit)
             rows = session.scalars(stmt).all()
+            if limit is not None:
+                rows.reverse()
             return [self._to_message_domain(r) for r in rows if r is not None]
 
     def find_message_by_id(self, message_id: str) -> Optional[ChatMessage]:

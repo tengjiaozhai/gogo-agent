@@ -45,8 +45,8 @@ class ChatHistoryService:
             )
         return views
 
-    def list_messages(self, conversation_id: str, user_id: str) -> list[MessageView]:
-        """Query all non-deleted messages for a conversation, verifying user ownership."""
+    def get_history_messages(self, conversation_id: str, user_id: str, *, limit: Optional[int] = None) -> list[ChatMessage]:
+        """鉴权后读取业务历史，保留原始时间精度；limit 非空时只取最近指定条数。"""
         conv = self._repo.find_conversation_by_id(conversation_id)
         if not conv:
             raise HTTPException(
@@ -59,7 +59,11 @@ class ChatHistoryService:
                 detail="无权访问该会话",
             )
 
-        messages = self._repo.find_messages_by_conversation_id(conversation_id)
+        return self._repo.find_messages_by_conversation_id(conversation_id, limit=limit)
+
+    def list_messages(self, conversation_id: str, user_id: str, *, limit: Optional[int] = None) -> list[MessageView]:
+        """将鉴权后的业务历史转换为 HTTP 消息视图。"""
+        messages = self.get_history_messages(conversation_id, user_id, limit=limit)
         views: list[MessageView] = []
         for m in messages:
             extra_dict: Optional[dict[str, Any]] = None

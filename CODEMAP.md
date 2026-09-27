@@ -34,8 +34,8 @@
 
 - [`src/gogo_agent/chat/__init__.py`](src/gogo_agent/chat/__init__.py) — 导出会话消息服务、执行器与路由入口。
 - [`src/gogo_agent/chat/models.py`](src/gogo_agent/chat/models.py) — 定义会话、消息领域模型及请求响应视图 DTO。
-- [`src/gogo_agent/chat/repository.py`](src/gogo_agent/chat/repository.py) — 实现 L1 业务历史（内存与 SQL）及 L2 AgentState 状态（agentscope_session）仓储。
-- [`src/gogo_agent/chat/service.py`](src/gogo_agent/chat/service.py) — 编排会话惰性创建、消息归属鉴权校验、标题自动提取及点赞反馈。
+- [`src/gogo_agent/chat/repository.py`](src/gogo_agent/chat/repository.py) — 实现 L1 业务历史及最近消息限量查询（内存与 SQL）、L2 AgentState 状态仓储。
+- [`src/gogo_agent/chat/service.py`](src/gogo_agent/chat/service.py) — 编排会话创建、鉴权后的全量或最近历史读取、标题提取及反馈。
 - [`src/gogo_agent/chat/executor.py`](src/gogo_agent/chat/executor.py) — 驱动 AgentScope 智能体推理、跨轮次恢复/保存 AgentState 并支持 SSE 流式与 JSON 输出。
 - [`src/gogo_agent/chat/dependencies.py`](src/gogo_agent/chat/dependencies.py) — 提供会话仓储、L2 记忆库与执行器的 FastAPI 依赖注入。
 - [`src/gogo_agent/chat/router.py`](src/gogo_agent/chat/router.py) — 定义 /api/chat 下的会话增删查、历史消息获取、标题更新及反馈端点。
@@ -48,6 +48,13 @@
 - [`src/gogo_agent/db/session.py`](src/gogo_agent/db/session.py) — 管理数据库连接池、会话生成及 FastAPI 依赖注入。
 - [`src/gogo_agent/db/init_db.py`](src/gogo_agent/db/init_db.py) — 幂等初始化数据库表结构与填充初始脱敏种子用户。
 
+## src/gogo_agent/intent
+
+- [`src/gogo_agent/intent/__init__.py`](src/gogo_agent/intent/__init__.py) — 导出改写、意图识别与历史上下文的数据类型和独立调用入口。
+- [`src/gogo_agent/intent/models.py`](src/gogo_agent/intent/models.py) — 定义问题、改写上下文、改写结果和有序意图结果的 Pydantic 契约与一致性校验。
+- [`src/gogo_agent/intent/context.py`](src/gogo_agent/intent/context.py) — 构造经会话归属校验和长度裁剪的最近历史与当前问题快照。
+- [`src/gogo_agent/intent/service.py`](src/gogo_agent/intent/service.py) — 配置单次文本模型调用并独立完成改写、LLM 意图识别和严格输出解析。
+
 ## docs
 
 - [`docs/AgentScope-Python-迁移路线图.md`](docs/AgentScope-Python-迁移路线图.md) — 规定从 Java 版 GoGo Agent 迁移到 AgentScope Python 2.x 的长期阶段规划与迁移边界。
@@ -55,10 +62,16 @@
 ## docs/契约样例
 
 - [`docs/契约样例/002-用户旅程静态契约.md`](docs/契约样例/002-用户旅程静态契约.md) — 记录 Java 版登录、对话、差旅、规划、审核、审批与预订的脱敏静态契约及风险边界。
+- [`docs/契约样例/008-问题改写与意图契约.md`](docs/契约样例/008-问题改写与意图契约.md) — 说明改写和意图数据字段、上下文补全样例及 Java 到 Python 的契约差异。
+- [`docs/契约样例/008-两轮对话.json`](docs/契约样例/008-两轮对话.json) — 提供固定日期下的两轮对话、缺上下文、多意图和未知意图验收样例。
+- [`docs/契约样例/010-011-单次调用与上下文.md`](docs/契约样例/010-011-单次调用与上下文.md) — 记录单次模型参数、近期历史构造、三轮改写样例及模拟验收边界。
 
 ## docs/架构
 
 - [`docs/架构/003-整体架构与HTTP入口.md`](docs/架构/003-整体架构与HTTP入口.md) — 记录 Java 请求链、Python 目标调用图、HTTP 入口取舍及 Java→Python 接口映射。
+- [`docs/架构/006-多智能体职责边界.md`](docs/架构/006-多智能体职责边界.md) — 记录 006 的多智能体职责取舍、Java 工具注册现状与 Python 目标写入边界。
+- [`docs/架构/007-Agent职责清单.md`](docs/架构/007-Agent职责清单.md) — 记录实际 Agent 的输入、输出、工具、状态和失败处理，以及 Java 装配与 Python 迁移范围的对应关系。
+- [`docs/架构/009-改写与识别调用边界.md`](docs/架构/009-改写与识别调用边界.md) — 记录改写与识别独立于 Master/Skill 的取舍、权威判定入口和调用顺序。
 
 ## docs/学习路线
 
@@ -91,6 +104,8 @@
 - [`tests/test_001.py`](tests/test_001.py) — 验证 001 配置、日期工具、HTTP 健康检查及模拟模型网关调用链。
 - [`tests/test_004_auth.py`](tests/test_004_auth.py) — 验证 004 登录、登出、用户信息隔离、401 拦截与密码哈希自动迁移。
 - [`tests/test_005_chat.py`](tests/test_005_chat.py) — 验证 005 会话与消息持久化、AgentState 记忆跨重启恢复、用户隔离 403 拦截与 SSE 输出。
+- [`tests/test_008_intent.py`](tests/test_008_intent.py) — 验证 008 数据契约的有效样例、非法输入、跨字段一致性和中文 schema 说明。
+- [`tests/test_010_011_intent.py`](tests/test_010_011_intent.py) — 验证独立单次 SDK 调用、错误出口和内存/SQL 历史窗口、身份隔离及裁剪。
 - [`tests/test_mariadb_integration.py`](tests/test_mariadb_integration.py) — 验证真实 MariaDB 数据库连接、用户密码迁移、会话消息与 agentscope_session 存取。
 - [`tests/test_redis_integration.py`](tests/test_redis_integration.py) — 验证真实 172.22.22.123 Redis 连接、30 天 TTL、跨实例 Token 持久化与平滑降级。
 
