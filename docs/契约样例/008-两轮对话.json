@@ -1,0 +1,137 @@
+{
+  "reference_date": "2026-09-27",
+  "timezone": "Asia/Shanghai",
+  "dialogue": [
+    {
+      "id": "turn_1",
+      "query": {
+        "question": "帮我规划2026年9月30日从北京去杭州的两天出差行程，包括往返交通和酒店。"
+      },
+      "expected_rewrite": {
+        "related": false,
+        "rewritten_question": "帮我规划2026年9月30日从北京去杭州的两天出差行程，包括往返交通和酒店。",
+        "reason": "首轮问题已明确任务、地点、日期、时长和规划范围，保持原句。",
+        "evidence": ["本轮：规划2026年9月30日从北京去杭州的两天出差行程，包括往返交通和酒店"],
+        "missing_context": []
+      },
+      "expected_intent": {
+        "intents": [
+          {
+            "intent": "itinerary_planning",
+            "confidence": "high",
+            "reason": "用户明确请求生成完整行程方案。",
+            "evidence": ["本轮：帮我规划", "本轮：包括往返交通和酒店"]
+          }
+        ],
+        "primary_intent": "itinerary_planning",
+        "multi_intent": false,
+        "overall_reason": "交通和酒店是同一规划任务的范围，不代表用户已授权下单。"
+      },
+      "assistant_reply": "当前需求是9月30日从北京去杭州，出差两天，规划往返交通和酒店。"
+    },
+    {
+      "id": "turn_2",
+      "query": {
+        "question": "明天去上海呢？"
+      },
+      "expected_rewrite": {
+        "related": true,
+        "rewritten_question": "请规划2026年9月28日从北京去上海的两天出差行程，包括往返交通和酒店。",
+        "reason": "延续上一轮规划任务，保留北京出发、两天及交通住宿范围，将目的地改为上海，并按给定日期解析明天。",
+        "evidence": [
+          "本轮：明天去上海呢？",
+          "上轮：从北京去杭州的两天出差行程，包括往返交通和酒店",
+          "服务端时间上下文：2026-09-27，Asia/Shanghai"
+        ],
+        "missing_context": []
+      },
+      "expected_intent": {
+        "intents": [
+          {
+            "intent": "itinerary_planning",
+            "confidence": "high",
+            "reason": "用户在调整上一轮规划需求，没有提出差旅单修改或下单指令。",
+            "evidence": ["上轮：帮我规划", "本轮：明天去上海呢？"]
+          }
+        ],
+        "primary_intent": "itinerary_planning",
+        "multi_intent": false,
+        "overall_reason": "任务动作仍为规划，当前轮只改变目的地和出发日期。"
+      }
+    }
+  ],
+  "standalone": [
+    {
+      "id": "missing_history",
+      "query": {
+        "question": "明天去上海呢？"
+      },
+      "expected_rewrite": {
+        "related": false,
+        "rewritten_question": null,
+        "reason": "没有提供可关联的历史，只能确认目的地和相对日期，不能确定任务动作或补出行程。",
+        "evidence": ["本轮：明天去上海呢？"],
+        "missing_context": ["此前要申请、规划还是查询的任务", "出发城市", "行程时长或返程要求"]
+      },
+      "expected_intent": null
+    },
+    {
+      "id": "multiple_intents",
+      "query": {
+        "question": "请先查差旅政策，再帮我申请出差。"
+      },
+      "expected_rewrite": {
+        "related": false,
+        "rewritten_question": "请先查差旅政策，再帮我申请出差。",
+        "reason": "新问题中的两个任务和先后关系明确，无需补充指代。申请所需表单信息由后续业务处理。",
+        "evidence": ["本轮：先查差旅政策，再帮我申请出差"],
+        "missing_context": []
+      },
+      "expected_intent": {
+        "intents": [
+          {
+            "intent": "policy_query",
+            "confidence": "high",
+            "reason": "用户要求先了解政策。",
+            "evidence": ["本轮：先查差旅政策"]
+          },
+          {
+            "intent": "travel_application",
+            "confidence": "high",
+            "reason": "政策查询后希望办理差旅申请。",
+            "evidence": ["本轮：再帮我申请出差"]
+          }
+        ],
+        "primary_intent": "travel_application",
+        "multi_intent": true,
+        "overall_reason": "申请是核心诉求，政策查询按用户要求排在前面；识别成功不代表已提交申请。"
+      }
+    },
+    {
+      "id": "unknown_intent",
+      "query": {
+        "question": "帮我处理一下那个。"
+      },
+      "expected_rewrite": {
+        "related": false,
+        "rewritten_question": null,
+        "reason": "当前未提供历史，无法确定指代对象。",
+        "evidence": ["本轮：那个"],
+        "missing_context": ["要处理的对象", "要执行的具体动作"]
+      },
+      "expected_intent": {
+        "intents": [
+          {
+            "intent": "unknown",
+            "confidence": "low",
+            "reason": "有用户输入，但缺少对象和动作信息，无法分类。",
+            "evidence": ["本轮：帮我处理一下那个"]
+          }
+        ],
+        "primary_intent": "unknown",
+        "multi_intent": false,
+        "overall_reason": "此结果示范直接对原问题识别时的 unknown，不表示未完成改写会自动进入识别或业务调度。"
+      }
+    }
+  ]
+}
