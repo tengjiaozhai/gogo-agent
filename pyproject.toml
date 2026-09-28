@@ -3,7 +3,7 @@ name = "gogo-agent"
 version = "0.1.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "agentscope==2.0.8",
+    "agentscope[vdb-qdrant]==2.0.8",
     "fastapi>=0.141.0",
     "uvicorn>=0.53.0",
     "pydantic>=2.13.0",

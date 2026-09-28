@@ -16,6 +16,7 @@ from .models import (
     RewriteResult,
 )
 from .context import RewriteContextBuilder
+from .rules import IntentRuleMatcher
 from .service import (
     IntentRecognizer,
     ModelOutputError,
@@ -24,6 +25,7 @@ from .service import (
     VectorMatcher,
     create_text_model,
 )
+from .vector import IntentSeedCorpus, IntentVectorConfig, IntentVectorIndex, IntentVectorMatcher
 
 __all__ = [
     "ConfidenceLevel",
@@ -41,6 +43,11 @@ __all__ = [
     "RewriteContextBuilder",
     "RewriteResult",
     "IntentRecognizer",
+    "IntentRuleMatcher",
+    "IntentSeedCorpus",
+    "IntentVectorConfig",
+    "IntentVectorIndex",
+    "IntentVectorMatcher",
     "ModelOutputError",
     "QueryRewriter",
     "RuleMatcher",

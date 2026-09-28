@@ -10,7 +10,7 @@
 - [`pyproject.toml`](pyproject.toml) — 定义 Python 项目元数据、运行时版本要求及依赖配置。
 - [`uv.lock`](uv.lock) — 固定 001 已解析的 Python 依赖版本以供重复安装。
 - [`README.md`](README.md) — 说明安装、终端 Agent、FastAPI 健康检查和测试命令。
-- [`.env.example`](.env.example) — 列出 001 模型网关所需的环境变量名。
+- [`.env.example`](.env.example) — 列出聊天/embedding 共用网关和意图向量索引所需的环境变量名。
 - [`main.py`](main.py) — 根目录便捷入口，供 PyCharm 右键一键运行或调试 API 后台。
 
 ## src/gogo_agent
@@ -53,7 +53,10 @@
 - [`src/gogo_agent/intent/__init__.py`](src/gogo_agent/intent/__init__.py) — 导出改写、意图识别与历史上下文的数据类型和独立调用入口。
 - [`src/gogo_agent/intent/models.py`](src/gogo_agent/intent/models.py) — 定义改写、意图及三层识别结果的 Pydantic 契约和跨字段校验。
 - [`src/gogo_agent/intent/context.py`](src/gogo_agent/intent/context.py) — 构造经会话归属校验和长度裁剪的最近历史与当前问题快照。
+- [`src/gogo_agent/intent/rules.py`](src/gogo_agent/intent/rules.py) — 按 Java 顺序执行 L0 强连接词守卫及 L1 优先级、排除词和子句歧义规则。
+- [`src/gogo_agent/intent/seed.json`](src/gogo_agent/intent/seed.json) — 保存从 Java YAML 移植的 16 类 68 条运行时意图种子。
 - [`src/gogo_agent/intent/service.py`](src/gogo_agent/intent/service.py) — 配置单次文本模型调用，并按规则、向量、LLM 顺序完成可替换的意图识别和严格输出解析。
+- [`src/gogo_agent/intent/vector.py`](src/gogo_agent/intent/vector.py) — 校验意图种子、构建版本化 Qdrant 索引并执行 L2 Top-2 阈值匹配。
 
 ## docs
 
@@ -66,6 +69,8 @@
 - [`docs/契约样例/008-两轮对话.json`](docs/契约样例/008-两轮对话.json) — 提供固定日期下的两轮对话、缺上下文、多意图和未知意图验收样例。
 - [`docs/契约样例/010-011-单次调用与上下文.md`](docs/契约样例/010-011-单次调用与上下文.md) — 记录单次模型参数、近期历史构造、三轮改写样例及模拟验收边界。
 - [`docs/契约样例/012-三层识别与短路.md`](docs/契约样例/012-三层识别与短路.md) — 说明 L1/L2/L3 注入接口、候选与阈值字段、歧义短路和假匹配器验收。
+- [`docs/契约样例/013-规则识别.md`](docs/契约样例/013-规则识别.md) — 记录 L0/L1 Java 规则顺序、排除词与读写歧义样例。
+- [`docs/契约样例/014-意图向量索引.md`](docs/契约样例/014-意图向量索引.md) — 记录 Qdrant 构建方法、Java 阈值基线与真实 Top-2 结果。
 
 ## docs/架构
 
@@ -102,6 +107,7 @@
 ## scripts
 
 - [`scripts/demo_010_011_real_model.py`](scripts/demo_010_011_real_model.py) — 使用项目网关和内存历史演示三轮真实改写、意图识别与语义检查。
+- [`scripts/build_intent_index.py`](scripts/build_intent_index.py) — 使用共用模型网关凭证构建或复用版本化意图索引并输出固定句探针。
 
 ## tests
 
@@ -113,6 +119,7 @@
 - [`tests/test_008_intent.py`](tests/test_008_intent.py) — 验证 008 数据契约的有效样例、非法输入、跨字段一致性和中文 schema 说明。
 - [`tests/test_010_011_intent.py`](tests/test_010_011_intent.py) — 用固定响应和内存 HTTP 验证单次调用、错误出口与历史窗口、身份隔离及裁剪。
 - [`tests/test_012_routing.py`](tests/test_012_routing.py) — 用假规则与向量匹配器验证三层短路、候选阈值、歧义及 L3 回退调用次数。
+- [`tests/test_013_rules.py`](tests/test_013_rules.py) — 验证 Java L0/L1 类别、规则优先级、排除词、复合弃权与无效输入。
+- [`tests/test_014_vector.py`](tests/test_014_vector.py) — 验证意图种子、真实 Qdrant SDK 幂等索引与 Java Top-2 阈值分差基线。
 - [`tests/test_mariadb_integration.py`](tests/test_mariadb_integration.py) — 验证真实 MariaDB 数据库连接、用户密码迁移、会话消息与 agentscope_session 存取。
 - [`tests/test_redis_integration.py`](tests/test_redis_integration.py) — 验证真实 172.22.22.123 Redis 连接、30 天 TTL、跨实例 Token 持久化与平滑降级。
-
