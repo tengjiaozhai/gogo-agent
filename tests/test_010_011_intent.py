@@ -1,4 +1,4 @@
-"""009–011 验收：真实 SDK 单次调用边界与鉴权后的跨轮业务历史。"""
+"""009–011 固定响应验收；真实模型输出见 scripts/demo_010_011_real_model.py。"""
 
 import asyncio
 from copy import deepcopy
@@ -64,8 +64,10 @@ async def test_rewrite_and_recognize_without_agent_or_tool_loop():
     sample = SAMPLES["dialogue"][0]
     model = FixedModel(sample["expected_rewrite"], sample["expected_intent"])
     rewritten = await QueryRewriter(model).rewrite(context(sample["query"]["question"]))
-    result = await IntentRecognizer(model).recognize(QueryInput(question=rewritten.rewritten_question))
-    assert result.primary_intent == "itinerary_planning"
+    decision = await IntentRecognizer(model).recognize(QueryInput(question=rewritten.rewritten_question))
+    assert decision.result is not None
+    assert decision.result.primary_intent == "itinerary_planning"
+    assert decision.hit_layer == "llm"
     assert len(model.calls) == 2  # 两个独立步骤各一次。
     for call in model.calls:
         assert call["tools"] is None and call["tool_choice"] is None
@@ -96,6 +98,22 @@ async def test_unsolicited_tool_call_is_rejected_even_with_valid_json():
     with pytest.raises(ModelOutputError, match="工具"):
         await IntentRecognizer(model).recognize(QueryInput(question="我要出差"))
     assert len(model.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_tomorrow_is_anchored_to_server_date_not_old_itinerary_date():
+    sample = SAMPLES["dialogue"][1]
+    invalid = dict(sample["expected_rewrite"])
+    invalid["rewritten_question"] = "请规划2026年10月9日从北京去上海的两天出差行程。"
+    model = FixedModel(invalid)
+    current = context(
+        sample["query"]["question"],
+        [HistoryMessage(role="user", content="规划2026年10月8日从北京去杭州的两天行程")],
+    )
+    with pytest.raises(ModelOutputError, match="服务端参考日期"):
+        await QueryRewriter(model).rewrite(current)
+    assert len(model.calls) == 1
+    assert "明天=2026-09-28" in model.calls[0]["messages"][0].get_text_content()
 
 
 @pytest.mark.asyncio
@@ -155,8 +173,9 @@ async def test_real_sdk_request_shape_and_both_retry_layers(monkeypatch, http_st
         assert model.max_retries == model.client.max_retries == 0
         recognizer = IntentRecognizer(model)
         if http_status == 200:
-            result = await recognizer.recognize(QueryInput(question="帮我规划行程"))
-            assert isinstance(result, IntentResult)
+            decision = await recognizer.recognize(QueryInput(question="帮我规划行程"))
+            assert isinstance(decision.result, IntentResult)
+            assert decision.hit_layer == "llm"
         else:
             with pytest.raises(openai.APIStatusError):
                 await recognizer.recognize(QueryInput(question="帮我规划行程"))

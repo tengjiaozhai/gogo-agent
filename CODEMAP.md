@@ -51,9 +51,9 @@
 ## src/gogo_agent/intent
 
 - [`src/gogo_agent/intent/__init__.py`](src/gogo_agent/intent/__init__.py) — 导出改写、意图识别与历史上下文的数据类型和独立调用入口。
-- [`src/gogo_agent/intent/models.py`](src/gogo_agent/intent/models.py) — 定义问题、改写上下文、改写结果和有序意图结果的 Pydantic 契约与一致性校验。
+- [`src/gogo_agent/intent/models.py`](src/gogo_agent/intent/models.py) — 定义改写、意图及三层识别结果的 Pydantic 契约和跨字段校验。
 - [`src/gogo_agent/intent/context.py`](src/gogo_agent/intent/context.py) — 构造经会话归属校验和长度裁剪的最近历史与当前问题快照。
-- [`src/gogo_agent/intent/service.py`](src/gogo_agent/intent/service.py) — 配置单次文本模型调用并独立完成改写、LLM 意图识别和严格输出解析。
+- [`src/gogo_agent/intent/service.py`](src/gogo_agent/intent/service.py) — 配置单次文本模型调用，并按规则、向量、LLM 顺序完成可替换的意图识别和严格输出解析。
 
 ## docs
 
@@ -65,6 +65,7 @@
 - [`docs/契约样例/008-问题改写与意图契约.md`](docs/契约样例/008-问题改写与意图契约.md) — 说明改写和意图数据字段、上下文补全样例及 Java 到 Python 的契约差异。
 - [`docs/契约样例/008-两轮对话.json`](docs/契约样例/008-两轮对话.json) — 提供固定日期下的两轮对话、缺上下文、多意图和未知意图验收样例。
 - [`docs/契约样例/010-011-单次调用与上下文.md`](docs/契约样例/010-011-单次调用与上下文.md) — 记录单次模型参数、近期历史构造、三轮改写样例及模拟验收边界。
+- [`docs/契约样例/012-三层识别与短路.md`](docs/契约样例/012-三层识别与短路.md) — 说明 L1/L2/L3 注入接口、候选与阈值字段、歧义短路和假匹配器验收。
 
 ## docs/架构
 
@@ -76,6 +77,7 @@
 ## docs/学习路线
 
 - [`docs/学习路线/README.md`](docs/学习路线/README.md) — 汇总从零用 Python 和 AgentScope 重构 GoGo Agent 的学习阶段索引与版本规则。
+- [`docs/学习路线/010-011-真实模型实操.md`](docs/学习路线/010-011-真实模型实操.md) — 指导用真实模型观察三轮改写与意图识别，区分固定响应和语义验收。
 - [`docs/学习路线/阶段A-001-005.md`](docs/学习路线/阶段A-001-005.md) — 指导阶段 A（启动、演示、架构、登录鉴权及会话持久化）的学习与实施任务。
 - [`docs/学习路线/阶段B-006-022.md`](docs/学习路线/阶段B-006-022.md) — 指导阶段 B（多智能体分工与多层意图流水线）的学习与实施任务。
 - [`docs/学习路线/阶段C-023-028.md`](docs/学习路线/阶段C-023-028.md) — 指导阶段 C（Master 智能体、模型统一配置与身份传递）的学习与实施任务。
@@ -97,6 +99,10 @@
 - [`exercises/ex000_b_async.py`](exercises/ex000_b_async.py) — 000-B 练习：异步 I/O 串行与并发耗时对比及 contextvars 协程上下文隔离。
 - [`exercises/ex000_c_api.py`](exercises/ex000_c_api.py) — 000-C 练习：最小 FastAPI 服务端点实现及 httpx 客户端请求演示。
 
+## scripts
+
+- [`scripts/demo_010_011_real_model.py`](scripts/demo_010_011_real_model.py) — 使用项目网关和内存历史演示三轮真实改写、意图识别与语义检查。
+
 ## tests
 
 - [`tests/__init__.py`](tests/__init__.py) — 标记测试目录为 Python 包。
@@ -105,7 +111,8 @@
 - [`tests/test_004_auth.py`](tests/test_004_auth.py) — 验证 004 登录、登出、用户信息隔离、401 拦截与密码哈希自动迁移。
 - [`tests/test_005_chat.py`](tests/test_005_chat.py) — 验证 005 会话与消息持久化、AgentState 记忆跨重启恢复、用户隔离 403 拦截与 SSE 输出。
 - [`tests/test_008_intent.py`](tests/test_008_intent.py) — 验证 008 数据契约的有效样例、非法输入、跨字段一致性和中文 schema 说明。
-- [`tests/test_010_011_intent.py`](tests/test_010_011_intent.py) — 验证独立单次 SDK 调用、错误出口和内存/SQL 历史窗口、身份隔离及裁剪。
+- [`tests/test_010_011_intent.py`](tests/test_010_011_intent.py) — 用固定响应和内存 HTTP 验证单次调用、错误出口与历史窗口、身份隔离及裁剪。
+- [`tests/test_012_routing.py`](tests/test_012_routing.py) — 用假规则与向量匹配器验证三层短路、候选阈值、歧义及 L3 回退调用次数。
 - [`tests/test_mariadb_integration.py`](tests/test_mariadb_integration.py) — 验证真实 MariaDB 数据库连接、用户密码迁移、会话消息与 agentscope_session 存取。
 - [`tests/test_redis_integration.py`](tests/test_redis_integration.py) — 验证真实 172.22.22.123 Redis 连接、30 天 TTL、跨实例 Token 持久化与平滑降级。
 

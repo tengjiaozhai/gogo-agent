@@ -133,3 +133,100 @@ class IntentResult(BaseModel):
         if self.multi_intent != (len(self.intents) > 1):
             raise ValueError("multi_intent 必须与 intents 的数量一致")
         return self
+
+
+class RecognitionLayer(StrEnum):
+    """识别结果的实际来源层级。"""
+
+    RULE = "rule"  # L1 规则
+    VECTOR = "vector"  # L2 向量
+    LLM = "llm"  # L3 模型
+
+
+class MatchStatus(StrEnum):
+    """快速匹配器的三种结论；歧义表示后续快速层应弃权。"""
+
+    HIT = "hit"
+    MISS = "miss"
+    AMBIGUOUS = "ambiguous"
+
+
+class IntentCandidate(BaseModel):
+    """快速层返回的一个候选类别及其可观察的匹配证据。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    intent: IntentCategory = Field(..., description="候选意图类别")
+    layer: Literal[RecognitionLayer.RULE, RecognitionLayer.VECTOR] = Field(
+        ..., description="产生候选的实际快速层：rule 或 vector"
+    )
+    score: float | None = Field(
+        ..., ge=0, le=1, allow_inf_nan=False,
+        description="L2 归一化相似度；规则候选为 null，不把数值当作模型授权",
+    )
+    reason: _NonEmptyText = Field(..., description="候选命中的规则证据或近邻样例说明")
+
+
+class FastMatch(BaseModel):
+    """L1/L2 匹配器的结构化输出，可独立表示命中、未命中与复合歧义。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: MatchStatus = Field(..., description="快速层结论：hit、miss 或 ambiguous")
+    result: IntentResult | None = Field(
+        ..., description="单意图命中时的 008 结果；未命中或歧义时必须为 null"
+    )
+    candidates: list[IntentCandidate] = Field(
+        default_factory=list, description="本层观察到的候选，保持匹配器给出的顺序"
+    )
+    threshold: float | None = Field(
+        default=None, ge=0, le=1, allow_inf_nan=False,
+        description="向量层本次判定使用的阈值；规则层为 null",
+    )
+    reason: _NonEmptyText = Field(..., description="本层命中、弃权或未命中的具体理由")
+
+    @model_validator(mode="after")
+    def validate_hit_state(self) -> Self:
+        """快速层只交付单意图命中；歧义交给完整识别步骤。"""
+        if (self.status is MatchStatus.HIT) != (self.result is not None):
+            raise ValueError("只有 hit 状态可以携带 result")
+        if self.result is not None and self.result.multi_intent:
+            raise ValueError("快速层不得把多意图当作单意图命中")
+        return self
+
+
+class RecognitionDecision(BaseModel):
+    """统一识别出口；快速模式未命中时 result 和 hit_layer 为 null。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    result: IntentResult | None = Field(..., description="最终意图；仅快速模式未命中时为 null")
+    hit_layer: RecognitionLayer | None = Field(..., description="实际命中层级；快速模式未命中时为 null")
+    confidence: ConfidenceLevel | None = Field(
+        ..., description="主要意图的置信等级；无命中时为 null"
+    )
+    vector_threshold: float | None = Field(
+        ..., ge=0, le=1, allow_inf_nan=False,
+        description="本次若尝试向量层，其使用的阈值；未尝试时为 null",
+    )
+    candidates: list[IntentCandidate] = Field(
+        ..., description="已尝试的快速层候选，按实际尝试顺序保留"
+    )
+    attempted_layers: list[RecognitionLayer] = Field(
+        ..., description="实际调用过的层级，按规则、向量、模型的顺序记录"
+    )
+    reason: _NonEmptyText = Field(..., description="各层短路、弃权或回退的可观察原因")
+
+    @model_validator(mode="after")
+    def validate_decision(self) -> Self:
+        """最终结论必须来自实际尝试过的层，且置信度与主要意图一致。"""
+        if self.result is None:
+            if self.hit_layer is not None or self.confidence is not None:
+                raise ValueError("未命中时不得填写命中层级或置信等级")
+        else:
+            if self.hit_layer is None or self.hit_layer not in self.attempted_layers:
+                raise ValueError("命中层级必须来自实际尝试的层")
+            primary = next(item for item in self.result.intents if item.intent is self.result.primary_intent)
+            if self.confidence is not primary.confidence:
+                raise ValueError("决策置信等级必须与主要意图一致")
+        return self
