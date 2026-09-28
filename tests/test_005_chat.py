@@ -1,6 +1,7 @@
 """Tests for 005: Conversation and message persistence (L1) and AgentScope AgentState (L2)."""
 
 import json
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import pytest
 from fastapi.testclient import TestClient
@@ -17,8 +18,49 @@ from gogo_agent.chat.repository import (
 )
 from gogo_agent.chat.service import ChatHistoryService
 from gogo_agent.chat.executor import ChatAgentExecutor
+from gogo_agent.intent import (
+    ConfidenceLevel, IntentCandidate, IntentCategory, IntentItem, IntentResult,
+    PreparedIntentTurn, QueryInput, RecognitionDecision, RecognitionLayer,
+    RewriteContextBuilder,
+)
 from gogo_agent.db.session import get_session_factory
 from agentscope.state import AgentState
+
+
+@asynccontextmanager
+async def offline_pipeline_factory(history_service):
+    """005 只验聊天存储和 AgentState，用固定意图结果隔离 017 外部模型。"""
+    class OfflinePipeline:
+        async def prepare(self, session_id, user_id, *, current_message_id):
+            query = RewriteContextBuilder(history_service).build_rewrite_context(
+                session_id, user_id, current_message_id=current_message_id,
+            ).query
+            result = IntentResult(
+                intents=[IntentItem(
+                    intent=IntentCategory.GENERAL_INFO,
+                    confidence=ConfidenceLevel.MEDIUM,
+                    reason="005 固定预处理",
+                    evidence=[query.question],
+                )],
+                primary_intent=IntentCategory.GENERAL_INFO,
+                multi_intent=False,
+                overall_reason="005 固定预处理",
+            )
+            decision = RecognitionDecision(
+                result=result, hit_layer=RecognitionLayer.RULE,
+                confidence=ConfidenceLevel.MEDIUM, vector_threshold=None,
+                candidates=[IntentCandidate(
+                    intent=IntentCategory.GENERAL_INFO, layer=RecognitionLayer.RULE,
+                    score=None, reason="005 固定候选",
+                )],
+                attempted_layers=[RecognitionLayer.RULE], reason="005 固定快速命中",
+            )
+            return PreparedIntentTurn(
+                branch="fast", original_question=query, effective_question=query,
+                fast_decision=decision, rewrite=None, decision=decision,
+            )
+
+    yield OfflinePipeline()
 
 
 @pytest.fixture
@@ -39,7 +81,10 @@ def test_users(monkeypatch):
     chat_repo = InMemoryChatHistoryRepository()
     session_store = InMemoryAgentSessionStore()
     chat_service = ChatHistoryService(repository=chat_repo)
-    executor = ChatAgentExecutor(chat_history_service=chat_service, agent_session_store=session_store)
+    executor = ChatAgentExecutor(
+        chat_history_service=chat_service, agent_session_store=session_store,
+        pipeline_factory=offline_pipeline_factory,
+    )
 
     from gogo_agent.chat.executor import _FallbackMockModel
     monkeypatch.setattr(executor, "_build_model", lambda stream=False: _FallbackMockModel(stream=stream))
@@ -61,6 +106,7 @@ def test_users(monkeypatch):
         "chat_repo": chat_repo,
         "session_store": session_store,
         "executor": executor,
+        "pipeline_factory": offline_pipeline_factory,
     }
     app.dependency_overrides.clear()
 
@@ -158,26 +204,33 @@ def test_multiturn_agent_state_restoration_across_restarts(test_users):
     history = test_users["chat_service"]
 
     # 模拟第一轮执行
-    executor1 = ChatAgentExecutor(chat_history_service=history, agent_session_store=store)
+    executor1 = ChatAgentExecutor(
+        chat_history_service=history, agent_session_store=store,
+        pipeline_factory=test_users["pipeline_factory"],
+    )
     reply1, msg_id1 = pytest.importorskip("asyncio").run(
         executor1.execute_turn(session_id, user_id, "你好，我是张三")
     )
     assert msg_id1
 
     # 检查 L2 存储中已存有 AgentState
-    saved_state = store.load_agent_state(session_id, agent_name="GoGo")
+    state_key = executor1._state_session_id(session_id, user_id)
+    saved_state = store.load_agent_state(state_key, agent_name="GoGo")
     assert saved_state is not None
     assert len(saved_state.context) == 2  # user + assistant
 
     # 模拟服务完全重启：创建全新的 executor 实例，丢弃原有内存
-    executor2 = ChatAgentExecutor(chat_history_service=history, agent_session_store=store)
+    executor2 = ChatAgentExecutor(
+        chat_history_service=history, agent_session_store=store,
+        pipeline_factory=test_users["pipeline_factory"],
+    )
     reply2, msg_id2 = pytest.importorskip("asyncio").run(
         executor2.execute_turn(session_id, user_id, "我的名字是什么？")
     )
     assert msg_id2
 
     # 检查 L2 中 state.context 增长到了 4 条（跨重启连续记忆）
-    updated_state = store.load_agent_state(session_id, agent_name="GoGo")
+    updated_state = store.load_agent_state(state_key, agent_name="GoGo")
     assert updated_state is not None
     assert len(updated_state.context) == 4
     # 上下文的第一条消息是第一轮的用户输入
@@ -349,6 +402,28 @@ def test_soft_delete_conversation(test_users):
     assert msgs_resp.status_code == 404
 
 
+def test_deleted_session_id_reused_by_other_user_has_no_old_agent_state(test_users):
+    """删除后同名 ID 可被别人复用，但不能带入旧用户的模型上下文。"""
+    client = TestClient(app)
+    session_id = "reused_session_005"
+    alice = {"Authorization": test_users["alice_token"], "Accept": "application/json"}
+    bob = {"Authorization": test_users["bob_token"], "Accept": "application/json"}
+    assert client.post(f"/api/chat/{session_id}", headers=alice, json={"message": "我是 Alice"}).status_code == 200
+    store = test_users["session_store"]
+    executor = test_users["executor"]
+    alice_key = executor._state_session_id(session_id, "u001")
+    assert store.load_agent_state(alice_key, agent_name="GoGo") is not None
+    assert client.delete(f"/api/chat/{session_id}", headers=alice).status_code == 200
+    assert store.load_agent_state(alice_key, agent_name="GoGo") is None
+
+    assert client.post(f"/api/chat/{session_id}", headers=bob, json={"message": "我是 Bob"}).status_code == 200
+    bob_key = executor._state_session_id(session_id, "u002")
+    state = store.load_agent_state(bob_key, agent_name="GoGo")
+    assert state is not None
+    assert len(state.context) == 2
+    assert state.context[0].get_text_content() == "我是 Bob"
+
+
 def test_sql_agentscope_session_persistence_when_database_available():
     """测试真实 SQL 环境下的 AgentScope 状态 (agentscope_session) 存储与读取。"""
     sf = get_session_factory()
@@ -368,6 +443,8 @@ def test_sql_agentscope_session_persistence_when_database_available():
     assert loaded.session_id == test_session_id
     assert len(loaded.context) == 1
     assert loaded.context[0].content[0].text == "SQL 测试上下文"
+    sql_store.delete_agent_state(test_session_id, agent_name="GoGo")
+    assert sql_store.load_agent_state(test_session_id, agent_name="GoGo") is None
 
 
 @pytest.mark.asyncio
@@ -391,4 +468,3 @@ async def test_real_model_e2e_invocation_when_configured():
     assert len(reply) > 0
     assert msg_id.startswith("msg_")
     print(f"\n[REAL MODEL TEST] 回复内容: {reply}")
-

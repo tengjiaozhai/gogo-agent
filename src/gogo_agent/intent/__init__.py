@@ -16,6 +16,14 @@ from .models import (
     RewriteResult,
 )
 from .context import RewriteContextBuilder
+from .execution import (
+    ChildIntentAgent,
+    InMemoryWriteLedger,
+    IntentExecutionReport,
+    IntentExecutionStep,
+    OrderedMasterCoordinator,
+)
+from .pipeline import IntentPipelineService, PreparedIntentTurn
 from .rules import IntentRuleMatcher
 from .service import (
     IntentRecognizer,
@@ -42,6 +50,11 @@ __all__ = [
     "RewriteContext",
     "RewriteContextBuilder",
     "RewriteResult",
+    "ChildIntentAgent",
+    "InMemoryWriteLedger",
+    "IntentExecutionReport",
+    "IntentExecutionStep",
+    "IntentPipelineService",
     "IntentRecognizer",
     "IntentRuleMatcher",
     "IntentSeedCorpus",
@@ -49,6 +62,8 @@ __all__ = [
     "IntentVectorIndex",
     "IntentVectorMatcher",
     "ModelOutputError",
+    "OrderedMasterCoordinator",
+    "PreparedIntentTurn",
     "QueryRewriter",
     "RuleMatcher",
     "VectorMatcher",

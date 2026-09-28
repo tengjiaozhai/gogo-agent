@@ -75,14 +75,12 @@ async def send_chat_message(
         )
         return ChatJSONResponse(sessionId=sessionId, messageId=msg_id, content=reply_text)
 
-    return StreamingResponse(
-        executor.stream_turn_sse(
-            session_id=sessionId,
-            user_id=current_user.user_id,
-            message=req.message,
-        ),
-        media_type="text/event-stream",
+    stream = await executor.stream_turn_sse(
+        session_id=sessionId,
+        user_id=current_user.user_id,
+        message=req.message,
     )
+    return StreamingResponse(stream, media_type="text/event-stream")
 
 
 @router.put(
@@ -108,9 +106,11 @@ async def delete_conversation(
     sessionId: str,
     current_user: UserAccount = Depends(get_current_user),
     history_service: ChatHistoryService = Depends(get_chat_history_service),
+    executor: ChatAgentExecutor = Depends(get_chat_executor),
 ) -> dict[str, bool]:
-    """删除指定会话。采用逻辑删除，确保数据永不物理抹除。"""
+    """逻辑删除会话和业务消息，清理对应用户的运行态 AgentState。"""
     history_service.delete_conversation(sessionId, current_user.user_id)
+    executor.delete_session_state(sessionId, current_user.user_id)
     return {"deleted": True}
 
 

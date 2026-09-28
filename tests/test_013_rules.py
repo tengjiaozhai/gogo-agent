@@ -89,11 +89,12 @@ def test_colloquial_cancel_outside_java_rule_falls_through():
     assert match("取消这次出差").status is MatchStatus.MISS
 
 
-def test_java_baseline_does_not_recognize_bare_policy_in_composite_sentence():
+def test_015_guard_now_abstains_on_java_bare_policy_gap():
     outcome = match("我要申请出差并看政策")
-    assert outcome.status is MatchStatus.HIT
-    assert outcome.result.primary_intent is IntentCategory.TRAVEL_APPLICATION
-    # 015/018 才修复该复合句的漏判，013 不伪称 Java 原有规则已识别政策。
+    assert outcome.status is MatchStatus.AMBIGUOUS
+    assert outcome.result is None
+    assert outcome.candidates[0].intent is IntentCategory.TRAVEL_APPLICATION
+    # Java 原版会短路成差旅申请；015 的未归类独立动作守卫让 L3 判定“看政策”。
 
 
 def test_appending_lower_priority_rule_keeps_existing_higher_priority(monkeypatch):

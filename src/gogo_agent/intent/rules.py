@@ -1,4 +1,4 @@
-"""013 从 Java 基线移植的 L0/L1 保守规则与子句级多意图守卫。"""
+"""013 Java L0/L1 规则及 015 未归类多动作子句的保守弃权。"""
 
 from dataclasses import dataclass
 import re
@@ -21,8 +21,16 @@ _STRONG_CONJUNCTIONS = (
 )
 _STRONG_PATTERN = re.compile(_STRONG_CONJUNCTIONS)
 _CLAUSE_SPLITTER = re.compile(
-    r"[，。；！？!?;,、]|" + _STRONG_CONJUNCTIONS + r"|还要|还想|再帮|再给|再查|再订|再看|和|跟"
+    r"[，。；！？!?;,、]|" + _STRONG_CONJUNCTIONS
+    + r"|并|再(?=查|看|找|规划|安排|申请|报销|取消|修改|订)|还要|还想|再帮|再给|再查|再订|再看|和|跟"
 )
+_ACTION_PATTERN = re.compile(
+    r"(?P<query>查询|查看|查|看|找)|(?P<plan>规划|安排)"
+    r"|(?P<apply>申请|提交|发起)|(?P<reimburse>报销)"
+    r"|(?P<cancel>取消|撤回)|(?P<modify>修改|变更|改签|退票)"
+    r"|(?P<book>预[定订]|下单|订(?!单))"
+)
+_NEGATED_ACTION_PREFIXES = ("不想", "不要", "不用", "无需", "不需", "不打算", "不准备", "别")
 _GREET = (
     r"你好|您好|哈喽|哈啰|嗨|hi|hello|hey|早上好|早安|上午好|中午好|下午好|晚上好"
     r"|在吗|在不在|在么|在不|有人吗|有人在吗|你在吗|请问|请教一下|打扰一下|打扰了|方便吗"
@@ -164,9 +172,19 @@ class IntentRuleMatcher:
                 )
 
         found: dict[IntentCategory, str] = {}
+        action_clauses: list[tuple[str, _Rule | None, str]] = []
         greeting = False
         for clause in _CLAUSE_SPLITTER.split(text):
-            hit = _first_match(clause.strip())
+            clause = clause.strip()
+            hit = _first_match(clause)
+            action = _ACTION_PATTERN.search(clause)
+            prefix = clause[max(0, action.start() - 3):action.start()] if action else ""
+            if (
+                action is not None
+                and action.start() <= 3
+                and not prefix.endswith(_NEGATED_ACTION_PREFIXES)
+            ):
+                action_clauses.append((clause, hit[0] if hit else None, action.lastgroup))
             if hit is None:
                 continue
             rule, _ = hit
@@ -176,6 +194,25 @@ class IntentRuleMatcher:
                 found.setdefault(rule.category, clause.strip())
         if greeting and not found:
             found[IntentCategory.GREETING] = text
+
+        # L1 不能给未归类的独立动作强行补单标签；同职责组且均已归类仍可快路由。
+        if (
+            len(action_clauses) >= 2
+            and len({kind for _, _, kind in action_clauses}) >= 2
+            and any(rule is None for _, rule, _ in action_clauses)
+        ):
+            return FastMatch(
+                status=MatchStatus.AMBIGUOUS,
+                result=None,
+                candidates=[
+                    IntentCandidate(
+                        intent=rule.category, layer=RecognitionLayer.RULE, score=None,
+                        reason=f"子句命中「{clause}」",
+                    )
+                    for clause, rule, _ in action_clauses if rule is not None
+                ],
+                reason="L1 连接词或标点分开的子句含不同动作，至少一项无法由规则归类；跳过 L2",
+            )
         if not found:
             return FastMatch(status=MatchStatus.MISS, result=None, reason="L1 无规则命中")
 

@@ -32,6 +32,7 @@ class AgentSessionStoreProtocol(Protocol):
 
     def load_agent_state(self, session_id: str, agent_name: str = "GoGo") -> Optional[AgentState]: ...
     def save_agent_state(self, session_id: str, state: AgentState, agent_name: str = "GoGo") -> None: ...
+    def delete_agent_state(self, session_id: str, agent_name: str = "GoGo") -> None: ...
 
 
 # ===================== In-Memory Implementations =====================
@@ -141,6 +142,9 @@ class InMemoryAgentSessionStore:
     def save_agent_state(self, session_id: str, state: AgentState, agent_name: str = "GoGo") -> None:
         key = self._make_key(session_id, agent_name)
         self._states[key] = state.model_dump_json()
+
+    def delete_agent_state(self, session_id: str, agent_name: str = "GoGo") -> None:
+        self._states.pop(self._make_key(session_id, agent_name), None)
 
 
 # ===================== SQL Implementations (SQLAlchemy / MariaDB) =====================
@@ -463,6 +467,19 @@ class SQLAgentSessionStore:
                     updated_at=now,
                 )
                 session.add(row)
+            session.commit()
+
+    def delete_agent_state(self, session_id: str, agent_name: str = "GoGo") -> None:
+        if not self._session_factory:
+            return
+        from sqlalchemy import delete
+        from gogo_agent.db.models import AgentScopeSessionModel
+
+        key = self._make_key(session_id, agent_name)
+        with self._session_factory() as session:
+            session.execute(delete(AgentScopeSessionModel).where(
+                AgentScopeSessionModel.session_id == key,
+            ))
             session.commit()
 
 
