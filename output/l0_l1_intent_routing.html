@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GOGO Agent - L0/L1 意图路由与一票否决权图解 (ELI5)</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card-bg: #1e293b;
+      --card-border: #334155;
+      --primary: #38bdf8;
+      --accent: #f43f5e;
+      --warning: #fbbf24;
+      --success: #34d399;
+      --purple: #c084fc;
+      --text: #f1f5f9;
+      --text-muted: #94a3b8;
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      padding: 2rem 1rem;
+    }
+    .container {
+      max-width: 1040px;
+      margin: 0 auto;
+    }
+    header {
+      text-align: center;
+      margin-bottom: 2.5rem;
+    }
+    .badge {
+      display: inline-block;
+      padding: 0.35rem 0.85rem;
+      border-radius: 9999px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      background: rgba(56, 189, 248, 0.15);
+      color: var(--primary);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      margin-bottom: 0.75rem;
+    }
+    h1 {
+      font-size: 2rem;
+      font-weight: 800;
+      margin-bottom: 0.5rem;
+      background: linear-gradient(135deg, #38bdf8 0%, #818cf8 50%, #c084fc 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .subtitle {
+      color: var(--text-muted);
+      font-size: 1.05rem;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1.5rem;
+      margin-bottom: 2.5rem;
+    }
+    @media (min-width: 768px) {
+      .grid-2 {
+        grid-template-columns: 1fr 1fr;
+      }
+      .grid-3 {
+        grid-template-columns: 1fr 1fr 1fr;
+      }
+    }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 1rem;
+      padding: 1.5rem;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+      position: relative;
+      overflow: hidden;
+    }
+    .card::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, var(--primary), var(--purple));
+    }
+    .card-danger::before {
+      background: linear-gradient(90deg, var(--accent), var(--warning));
+    }
+    .card-success::before {
+      background: linear-gradient(90deg, var(--success), var(--primary));
+    }
+    .card h2 {
+      font-size: 1.25rem;
+      margin-bottom: 0.75rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .tag {
+      font-size: 0.75rem;
+      padding: 0.2rem 0.5rem;
+      border-radius: 0.375rem;
+      font-weight: 600;
+    }
+    .tag-danger { background: rgba(244, 63, 94, 0.2); color: var(--accent); }
+    .tag-success { background: rgba(52, 211, 153, 0.2); color: var(--success); }
+    .tag-warning { background: rgba(251, 191, 36, 0.2); color: var(--warning); }
+    .tag-blue { background: rgba(56, 189, 248, 0.2); color: var(--primary); }
+
+    /* ELI5 Cartoon Metaphor */
+    .eli5-box {
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px dashed #475569;
+      border-radius: 0.75rem;
+      padding: 1.25rem;
+      margin: 1rem 0;
+    }
+    .analogy-title {
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--warning);
+      margin-bottom: 0.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+
+    /* Step flow */
+    .pipeline {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      margin: 1.5rem 0;
+    }
+    .pipeline-step {
+      display: flex;
+      align-items: flex-start;
+      gap: 1rem;
+      background: rgba(15, 23, 42, 0.5);
+      border: 1px solid var(--card-border);
+      border-radius: 0.75rem;
+      padding: 1rem;
+    }
+    .step-badge {
+      min-width: 3.5rem;
+      text-align: center;
+      padding: 0.35rem 0.5rem;
+      border-radius: 0.5rem;
+      font-size: 0.85rem;
+      font-weight: 700;
+      background: #334155;
+      color: #fff;
+    }
+    .step-content {
+      flex: 1;
+    }
+    .step-title {
+      font-weight: 700;
+      font-size: 1rem;
+      color: #f8fafc;
+      margin-bottom: 0.25rem;
+    }
+    .step-desc {
+      font-size: 0.875rem;
+      color: var(--text-muted);
+    }
+
+    /* Comparison box */
+    .compare-container {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1rem;
+      margin: 1.25rem 0;
+    }
+    @media (min-width: 768px) {
+      .compare-container {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+    .compare-panel {
+      border-radius: 0.75rem;
+      padding: 1.25rem;
+      border: 1px solid;
+    }
+    .compare-bad {
+      background: rgba(244, 63, 94, 0.08);
+      border-color: rgba(244, 63, 94, 0.3);
+    }
+    .compare-good {
+      background: rgba(52, 211, 153, 0.08);
+      border-color: rgba(52, 211, 153, 0.3);
+    }
+    .compare-header {
+      font-weight: 700;
+      font-size: 0.95rem;
+      margin-bottom: 0.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .compare-bad .compare-header { color: var(--accent); }
+    .compare-good .compare-header { color: var(--success); }
+
+    /* Code diff style */
+    .code-box {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.85rem;
+      background: #090d16;
+      border: 1px solid #1e293b;
+      border-radius: 0.5rem;
+      padding: 0.75rem 1rem;
+      margin: 0.75rem 0;
+      overflow-x: auto;
+    }
+    .code-del {
+      color: #fda4af;
+      background: rgba(244, 63, 94, 0.15);
+      display: block;
+      padding: 0.1rem 0.25rem;
+      border-radius: 0.25rem;
+    }
+    .code-add {
+      color: #6ee7b7;
+      background: rgba(52, 211, 153, 0.15);
+      display: block;
+      padding: 0.1rem 0.25rem;
+      border-radius: 0.25rem;
+    }
+    .code-normal {
+      color: #cbd5e1;
+      display: block;
+      padding: 0.1rem 0.25rem;
+    }
+
+    /* Solution cards */
+    .sol-card {
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid var(--card-border);
+      border-radius: 0.75rem;
+      padding: 1rem;
+      margin-top: 0.75rem;
+    }
+    .sol-card h3 {
+      font-size: 0.95rem;
+      color: var(--primary);
+      margin-bottom: 0.35rem;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .sol-card p {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    footer {
+      text-align: center;
+      font-size: 0.85rem;
+      color: #64748b;
+      margin-top: 3rem;
+      padding-top: 1rem;
+      border-top: 1px solid #1e293b;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="badge">GOGO-Agent 架构揭秘</div>
+      <h1>意图分流与“一票否决权”深度图解</h1>
+      <p class="subtitle">5 岁小朋友也能看懂的 L0/L1 规则设计，以及路由不准的彻底解决方案</p>
+    </header>
+
+    <!-- SECTION 1: ELI5 比喻 -->
+    <div class="card" style="margin-bottom: 2rem;">
+      <h2>🍜 5岁小朋友都能懂的比喻：牛肉面馆的“退单”惨剧</h2>
+      
+      <div class="eli5-box">
+        <div class="analogy-title">💡 想象你走进一家全自动牛肉面馆：</div>
+        <p>你站在<strong>自动点餐机（L1规则匹配）</strong>前喊了一句：<strong style="color:#fbbf24;">“帮我【退掉】昨天的【红烧牛肉面】！”</strong></p>
+        
+        <div class="compare-container" style="margin-top: 1rem;">
+          <div class="compare-panel compare-bad">
+            <div class="compare-header">❌ 没有设置“退/取消”一票否决权</div>
+            <p style="font-size: 0.875rem;">点餐机是笨机器，它在句子里只认出了<strong>【牛肉面】</strong>！</p>
+            <p style="font-size: 0.875rem; margin-top: 0.5rem; color:#f87171;">
+              <strong>灾难发生：</strong>点餐机高兴地喊：“好嘞！给您重新下一单红烧牛肉面，请付款 30 元！”<br>
+              👉 <em>你想退面，它反而强行又给你点了一碗面！</em>
+            </p>
+          </div>
+
+          <div class="compare-panel compare-good">
+            <div class="compare-header">✅ 设置了“退/取消”一票否决权</div>
+            <p style="font-size: 0.875rem;">点餐机虽然看到了【牛肉面】，但屏幕红灯狂闪：<strong>“警报！顾客说了【退掉】！”</strong></p>
+            <p style="font-size: 0.875rem; margin-top: 0.5rem; color:#34d399;">
+              <strong>安全自保：</strong>点餐机直接锁屏弃权：“这涉及退钱和撤单，我不敢乱动，请转人工服务台（L3大模型/经理）处理！”<br>
+              👉 <em>一票否决保平安，绝不把破坏性操作办反！</em>
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SECTION 2: 为什么取消要单独一票否决 -->
+    <div class="card card-danger" style="margin-bottom: 2rem;">
+      <h2>🛑 为什么“取消”在系统中必须拥有一票否决权？</h2>
+      <p style="font-size: 0.9rem; color: var(--text-muted); margin-bottom: 1rem;">
+        在企业差旅系统中，“取消”是<strong>具有极高破坏性的终结动作</strong>。用户说取消时，句子里一定会带着名词宾语：
+      </p>
+
+      <div class="grid grid-3" style="gap: 1rem; margin-bottom: 1rem;">
+        <div style="background: rgba(15,23,42,0.4); padding: 0.85rem; border-radius: 0.5rem; border: 1px solid var(--card-border);">
+          <div style="font-weight:700; color:#38bdf8; margin-bottom:0.25rem;">“取消我的【出差单】”</div>
+          <div style="font-size:0.8rem; color:#94a3b8;">名词是“出差单”，若没否决权，会被【订单查询】误截胡。</div>
+        </div>
+        <div style="background: rgba(15,23,42,0.4); padding: 0.85rem; border-radius: 0.5rem; border: 1px solid var(--card-border);">
+          <div style="font-weight:700; color:#38bdf8; margin-bottom:0.25rem;">“帮我把【机票】退了”</div>
+          <div style="font-size:0.8rem; color:#94a3b8;">名词是“机票”，若没否决权，会被【航班搜索】拉去搜机票。</div>
+        </div>
+        <div style="background: rgba(15,23,42,0.4); padding: 0.85rem; border-radius: 0.5rem; border: 1px solid var(--card-border);">
+          <div style="font-weight:700; color:#38bdf8; margin-bottom:0.25rem;">“取消下周的【行程规划】”</div>
+          <div style="font-size:0.8rem; color:#94a3b8;">名词是“行程规划”，若没否决权，会被【规划助手】重新做行程。</div>
+        </div>
+      </div>
+
+      <div style="background: rgba(244, 63, 94, 0.1); border-left: 4px solid var(--accent); padding: 0.75rem 1rem; border-radius: 0 0.5rem 0.5rem 0; font-size: 0.875rem;">
+        <strong>核心法则：</strong> “取消”动作词一旦出现，普通名词查询规则必须立即全员噤声（一票否决），让位给专门的取消代理或交给大模型研判！
+      </div>
+    </div>
+
+    <!-- SECTION 3: L0 与 L1 的架构流水线 -->
+    <div class="card" style="margin-bottom: 2rem;">
+      <h2>⚙️ L0 与 L1 的分工流水线</h2>
+      
+      <div class="pipeline">
+        <div class="pipeline-step">
+          <div class="step-badge" style="background:#6366f1;">L0 哨兵</div>
+          <div class="step-content">
+            <div class="step-title">强连接词快速安检（红绿灯）</div>
+            <div class="step-desc">
+              检查是否出现 <code style="color:#a5b4fc;">然后、接着、顺便、完了再、外加</code>。<br>
+              <strong>目的：</strong>如果一句话包含多件事，单条规则必定会以偏概全。L0 看到强连接词立即主动弃权（AMBIGUOUS），直接护送进复合意图管线。
+            </div>
+          </div>
+        </div>
+
+        <div class="pipeline-step">
+          <div class="step-badge" style="background:#0ea5e9;">L1 规则</div>
+          <div class="step-content">
+            <div class="step-title">高精优先级关键词 + 负向排除词库</div>
+            <div class="step-desc">
+              按严格优先级遍历意图：<code>GREETING → REIMBURSEMENT → TRAVEL_CANCEL → TRAVEL_MODIFY → TRAVEL_ORDER_QUERY → ...</code><br>
+              <strong>原则：</strong>宁可弃权（MISS）漏给后置层，也绝不抢答误判！
+            </div>
+          </div>
+        </div>
+
+        <div class="pipeline-step">
+          <div class="step-badge" style="background:#10b981;">L2 向量</div>
+          <div class="step-content">
+            <div class="step-title">语义余弦相似度匹配（近义泛化）</div>
+            <div class="step-desc">
+              当 L1 弃权时，通过 Qdrant / Dense Vector 匹配历史标准语料，支持口语化变形。
+            </div>
+          </div>
+        </div>
+
+        <div class="pipeline-step">
+          <div class="step-badge" style="background:#ec4899;">L3 大模型</div>
+          <div class="step-content">
+            <div class="step-title">LLM 终极推理兜底（深度理解）</div>
+            <div class="step-desc">
+              处理复杂多意图、隐式否定、情绪表达与罕见句式，做最终仲裁。
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SECTION 4: 路由不准确的根本原因与修复方案 -->
+    <div class="card card-success">
+      <h2>🛠️ 彻底修复“路由不准确”的 4 级方案</h2>
+      <p style="font-size: 0.9rem; color: var(--text-muted); margin-bottom: 1rem;">
+        为什么“帮我取消上次的出差单”在 L1 没有直接命中 <code>TRAVEL_CANCEL</code>，而是被排除词逼得弃权给 L2/L3？如何根治？
+      </p>
+
+      <div class="sol-card">
+        <h3>方案 1（L1 规则层）：拓宽 TRAVEL_CANCEL 的正向正则捕获范围（治本秒判）</h3>
+        <p>原规则太死板（只认“取消出差”，中间插了“上次的”、末尾带了“单”就瞎了）：</p>
+        <div class="code-box">
+          <span class="code-del">- r"(取消出差|取消差旅|取消审批|取消我的(差旅|出差)|...)"</span>
+          <span class="code-add">+ r"(取消.*(出差|差旅|审批)(单|申请|记录)?|撤回.*(差旅|出差|审批)?(申请|单)?|这次不去了?|不出差了)"</span>
+        </div>
+        <p style="font-size: 0.8rem; color:#6ee7b7;">✨ 效果：让“帮我取消上次的出差单”在第 5 位直接 100% 秒判为取消，耗时 0 毫秒！</p>
+      </div>
+
+      <div class="sol-card">
+        <h3>方案 2（L1 排除词层）：规范统一“一票否决动词表”</h3>
+        <p>避免每个规则手工写排除词导致遗漏。将 <code>{"提交", "取消", "修改", "报销", "规划"}</code> 提取为动作动词常量池，在所有查询类规则（机票查询、火车查询、单据查询）中统一装配，杜绝名词截胡。</p>
+      </div>
+
+      <div class="sol-card">
+        <h3>方案 3（L2 向量层）：扩充典型真实测试语料到种子库</h3>
+        <p>在 <code>intent_seeds.json</code> 中为 <code>TRAVEL_CANCEL</code> 补充 5~10 条带修饰语的真实口语，如“帮我取消上次出差单”、“撤销上一笔出差”，确保即使 L1 弃权，L2 也能在 5ms 内高分命中。</p>
+      </div>
+
+      <div class="sol-card">
+        <h3>方案 4（测试工程护栏）：TDD 增加端到端消歧回归用例</h3>
+        <p>在 <code>tests/test_013_rules.py</code> 中加入对抗性测试用例集：验证“动词是取消、名词是查单”的复合句，确保路由准确率保持 100%。</p>
+      </div>
+    </div>
+
+    <footer>
+      GOGO Agent Intent Routing Visual Guide • Generated for Workspace Architecture Review
+    </footer>
+  </div>
+</body>
+</html>

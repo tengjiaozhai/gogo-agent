@@ -88,9 +88,11 @@ _TARGET_GROUP = {
 
 @dataclass(frozen=True)
 class _Rule:
-    category: IntentCategory
-    keyword: re.Pattern[str]
-    negative_keywords: tuple[re.Pattern[str], ...]
+    """单条意图快速匹配规则。"""
+
+    category: IntentCategory  # 意图类别：规则匹配成功后归属的目标业务意图
+    keyword: re.Pattern[str]  # 正向匹配模式：文本命中该正则表达式时初步满足该规则
+    negative_keywords: tuple[re.Pattern[str], ...]  # 负向排除模式元组：文本命中任一排除正则时立即一票否决弃权
 
 
 def _rule(category: IntentCategory, keyword: str, *negative_keywords: str) -> _Rule:

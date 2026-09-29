@@ -36,7 +36,7 @@
 - [`src/gogo_agent/chat/models.py`](src/gogo_agent/chat/models.py) — 定义会话、消息领域模型及请求响应视图 DTO。
 - [`src/gogo_agent/chat/repository.py`](src/gogo_agent/chat/repository.py) — 实现内存与 SQL 的业务历史限量查询、AgentState 保存读取及删除。
 - [`src/gogo_agent/chat/service.py`](src/gogo_agent/chat/service.py) — 编排会话创建、鉴权后的全量或最近历史读取、标题提取及反馈。
-- [`src/gogo_agent/chat/executor.py`](src/gogo_agent/chat/executor.py) — 保存本轮消息并执行意图预处理，再驱动 AgentScope Agent、持久化状态和输出 JSON/SSE。
+- [`src/gogo_agent/chat/executor.py`](src/gogo_agent/chat/executor.py) — 保存本轮消息并执行意图预处理，统一交给 GoGo 协调入口后持久化状态和输出 JSON/SSE。
 - [`src/gogo_agent/chat/dependencies.py`](src/gogo_agent/chat/dependencies.py) — 提供会话仓储、L2 记忆库与执行器的 FastAPI 依赖注入。
 - [`src/gogo_agent/chat/router.py`](src/gogo_agent/chat/router.py) — 定义 /api/chat 的会话接口，并在 SSE 建立前完成对话预处理。
 
@@ -78,6 +78,7 @@
 - [`docs/契约样例/016-017-执行与流水线.md`](docs/契约样例/016-017-执行与流水线.md) — 说明 HTTP 识别流水线、假 Master 顺序执行、断点 demo 与运行边界。
 - [`docs/契约样例/018-意图回归语料.json`](docs/契约样例/018-意图回归语料.json) — 保存误路由与正确样例的固定历史、期望改写和命中层。
 - [`docs/契约样例/018-意图误路由修复.md`](docs/契约样例/018-意图误路由修复.md) — 记录否定动作、短追问和三亚出差等修复前后差异与验收。
+- [`docs/契约样例/019-主协调入口与直跳取舍.md`](docs/契约样例/019-主协调入口与直跳取舍.md) — 记录不启用高置信直跳的依据、当前协调入口验收及后续候选条件。
 
 ## docs/架构
 
@@ -133,5 +134,6 @@
 - [`tests/test_015_multi_intent.py`](tests/test_015_multi_intent.py) — 验证复合句跳过 L2、L3 有序双意图输出和纯单意图快速路径。
 - [`tests/test_016_017_pipeline.py`](tests/test_016_017_pipeline.py) — 验证条件改写、假子 Agent 顺序和去重、HTTP JSON/SSE 与失败出口。
 - [`tests/test_018_intent_regression.py`](tests/test_018_intent_regression.py) — 验证否定规则、上下文短追问守卫和改写动作保真。
+- [`tests/test_019_routing.py`](tests/test_019_routing.py) — 验证 L1/L2/L3 结果均进入 GoGo 协调入口，不因高置信绕过会话归属或提示词。
 - [`tests/test_mariadb_integration.py`](tests/test_mariadb_integration.py) — 验证真实 MariaDB 数据库连接、用户密码迁移、会话消息与 agentscope_session 存取。
 - [`tests/test_redis_integration.py`](tests/test_redis_integration.py) — 验证真实 172.22.22.123 Redis 连接、30 天 TTL、跨实例 Token 持久化与平滑降级。

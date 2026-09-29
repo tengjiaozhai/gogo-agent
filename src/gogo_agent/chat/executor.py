@@ -75,6 +75,9 @@ class _FallbackMockModel(OpenAIChatModel):
 class ChatAgentExecutor:
     """协调消息持久化、AgentState 生命周期及 AgentScope 智能体执行。"""
 
+    # 019：真实 Master/子 Agent 尚待 023；当前所有识别结果统一进入这个协调入口。
+    COORDINATOR_AGENT_NAME = "GoGo"
+
     def __init__(
         self,
         chat_history_service: Optional[ChatHistoryService] = None,
@@ -117,8 +120,10 @@ class ChatAgentExecutor:
 
     def delete_session_state(self, session_id: str, user_id: str) -> None:
         """经调用方验证会话归属后清理本用户的 AgentState。"""
-        self._session_store.delete_agent_state(self._state_session_id(session_id, user_id), agent_name="GoGo")
-        self._session_store.delete_agent_state(session_id, agent_name="GoGo")
+        self._session_store.delete_agent_state(
+            self._state_session_id(session_id, user_id), agent_name=self.COORDINATOR_AGENT_NAME,
+        )
+        self._session_store.delete_agent_state(session_id, agent_name=self.COORDINATOR_AGENT_NAME)
 
     @staticmethod
     async def _close_agent_model(agent: Agent | None) -> None:
@@ -137,7 +142,7 @@ class ChatAgentExecutor:
             model = self._build_model()
         intents = "、".join(item.intent.value for item in prepared.decision.result.intents)
         return Agent(
-            name="GoGo",
+            name=self.COORDINATOR_AGENT_NAME,
             system_prompt=(
                 "你是 GoGo 差旅助手的核心智能体。你负责协助用户办理差旅申请、"
                 "行程规划、差旅政策咨询与预订服务。请保持专业、简洁和友善。"
@@ -166,11 +171,11 @@ class ChatAgentExecutor:
         except Exception as exc:
             raise HTTPException(503, f"意图处理失败（{type(exc).__name__}）") from None
 
-    @staticmethod
-    def _pipeline_extra(prepared: PreparedIntentTurn) -> dict:
+    def _pipeline_extra(self, prepared: PreparedIntentTurn) -> dict:
         """保存可调试层级与分支，不保存密钥、原始模型响应或可信身份。"""
         decision = prepared.decision
         return {"intent_pipeline": {
+            "dispatch_target": self.COORDINATOR_AGENT_NAME if decision is not None else None,
             "branch": prepared.branch,
             "fast_layers": [layer.value for layer in prepared.fast_decision.attempted_layers],
             "attempted_layers": [layer.value for layer in decision.attempted_layers] if decision else [],
@@ -203,7 +208,7 @@ class ChatAgentExecutor:
             text = self._clarification(prepared)
             msg_id = self._history_service.save_assistant_message(
                 conversation_id=session_id, user_id=user_id, content=text,
-                agent_name="GoGo", extra=self._pipeline_extra(prepared),
+                agent_name=self.COORDINATOR_AGENT_NAME, extra=self._pipeline_extra(prepared),
             )
             return text, msg_id
 
@@ -211,7 +216,9 @@ class ChatAgentExecutor:
         state_session_id = self._state_session_id(session_id, user_id)
         agent: Agent | None = None
         try:
-            agent_state = self._session_store.load_agent_state(state_session_id, agent_name="GoGo")
+            agent_state = self._session_store.load_agent_state(
+                state_session_id, agent_name=self.COORDINATOR_AGENT_NAME,
+            )
             if agent_state is None:
                 agent_state = AgentState(session_id=session_id)
 
@@ -229,12 +236,14 @@ class ChatAgentExecutor:
             conversation_id=session_id,
             user_id=user_id,
             content=reply_text,
-            agent_name="GoGo",
+            agent_name=self.COORDINATOR_AGENT_NAME,
             extra=self._pipeline_extra(prepared),
         )
 
         # 再保存 AgentState；此处失败仍可能留下已保存的业务回复。
-        self._session_store.save_agent_state(state_session_id, agent.state, agent_name="GoGo")
+        self._session_store.save_agent_state(
+            state_session_id, agent.state, agent_name=self.COORDINATOR_AGENT_NAME,
+        )
 
         return reply_text, msg_id
 
@@ -258,7 +267,7 @@ class ChatAgentExecutor:
             text = self._clarification(prepared)
             msg_id = self._history_service.save_assistant_message(
                 conversation_id=session_id, user_id=user_id, content=text,
-                agent_name="GoGo", extra=self._pipeline_extra(prepared),
+                agent_name=self.COORDINATOR_AGENT_NAME, extra=self._pipeline_extra(prepared),
             )
 
             async def clarification_events() -> AsyncGenerator[str, None]:
@@ -281,7 +290,9 @@ class ChatAgentExecutor:
         agent: Agent | None = None
 
         try:
-            agent_state = self._session_store.load_agent_state(state_session_id, agent_name="GoGo")
+            agent_state = self._session_store.load_agent_state(
+                state_session_id, agent_name=self.COORDINATOR_AGENT_NAME,
+            )
             if agent_state is None:
                 agent_state = AgentState(session_id=session_id)
 
@@ -320,12 +331,14 @@ class ChatAgentExecutor:
                 conversation_id=session_id,
                 user_id=user_id,
                 content=full_reply_text,
-                agent_name="GoGo",
+                agent_name=self.COORDINATOR_AGENT_NAME,
                 extra=self._pipeline_extra(prepared),
             )
 
             # 再保存 AgentState；若失败，SSE 不报完成。
-            self._session_store.save_agent_state(state_session_id, agent.state, agent_name="GoGo")
+            self._session_store.save_agent_state(
+                state_session_id, agent.state, agent_name=self.COORDINATOR_AGENT_NAME,
+            )
         except Exception as exc:
             yield f"event: error\ndata: 回复保存失败（{type(exc).__name__}）\n\n"
             return
