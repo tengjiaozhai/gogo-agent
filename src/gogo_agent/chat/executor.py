@@ -16,7 +16,9 @@ from pydantic import ValidationError
 from gogo_agent.intent.models import QueryInput
 from gogo_agent.intent.pipeline import IntentPipelineService, PreparedIntentTurn
 from gogo_agent.intent.runtime import load_intent_runtime_settings, open_intent_pipeline
+from gogo_agent.request_context import RequestContext
 
+from .continuation import ActiveAgentContinuation, TurnEntry, choose_turn_entry
 from .repository import (
     AgentSessionStoreProtocol,
     create_agent_session_store,
@@ -83,10 +85,12 @@ class ChatAgentExecutor:
         chat_history_service: Optional[ChatHistoryService] = None,
         agent_session_store: Optional[AgentSessionStoreProtocol] = None,
         pipeline_factory: Callable[[ChatHistoryService], AsyncContextManager[IntentPipelineService]] = open_intent_pipeline,
+        active_continuation: ActiveAgentContinuation | None = None,
     ):
         self._history_service = chat_history_service or ChatHistoryService()
         self._session_store = agent_session_store or create_agent_session_store()
         self._pipeline_factory = pipeline_factory
+        self._active_continuation = active_continuation
 
     @property
     def history_service(self) -> ChatHistoryService:
@@ -154,27 +158,68 @@ class ChatAgentExecutor:
             state=state,
         )
 
-    async def _prepare_turn(self, session_id: str, user_id: str, message: str) -> PreparedIntentTurn:
-        """保存原问题后执行 017；模型或索引故障不能继续触发 Agent。"""
+    def _save_user_turn(self, session_id: str, user_id: str, message: str) -> RequestContext:
+        """保存已鉴权消息后创建可信上下文，供两条入口共用。"""
         try:
             QueryInput(question=message)
         except ValidationError:
             raise HTTPException(422, "消息不能为空") from None
-        current_message_id = self._history_service.save_user_message(session_id, user_id, message)
+        request_id = self._history_service.save_user_message(session_id, user_id, message)
+        return RequestContext(user_id=user_id, session_id=session_id, request_id=request_id)
+
+    def _active_agent_for_turn(self, request: RequestContext, message: str) -> str | None:
+        """只接受已注册名称与完整续跑词；无记录或无效记录进入完整流水线。"""
+        if self._active_continuation is None:
+            return None
+        try:
+            active_name = self._active_continuation.get_active_agent(request)
+            entry = choose_turn_entry(
+                active_name, message, self._active_continuation.available_agents,
+            )
+        except Exception as exc:
+            raise HTTPException(503, f"活跃 Agent 状态读取失败（{type(exc).__name__}）") from None
+        return active_name if entry is TurnEntry.CONTINUE_ACTIVE else None
+
+    async def _continue_active_turn(
+        self, request: RequestContext, agent_name: str, message: str,
+    ) -> tuple[str, str]:
+        """把可信会话参数交给已注册活跃 Agent，统一保存其真实回复。"""
+        try:
+            text = await self._active_continuation.continue_turn(
+                request, agent_name, QueryInput(question=message),
+            )
+            if not isinstance(text, str) or not text.strip():
+                raise ValueError("活跃 Agent 没有返回可保存的回复")
+        except Exception as exc:
+            raise HTTPException(503, f"活跃 Agent 续跑失败（{type(exc).__name__}）") from None
+        msg_id = self._history_service.save_assistant_message(
+            conversation_id=request.session_id, user_id=request.user_id, content=text,
+            agent_name=agent_name,
+            extra={
+                "turn_entry": TurnEntry.CONTINUE_ACTIVE.value,
+                "active_agent": agent_name,
+                "request_id": request.request_id,
+                "trace_id": request.trace_id,
+            },
+        )
+        return text, msg_id
+
+    async def _prepare_turn(self, request: RequestContext) -> PreparedIntentTurn:
+        """消息已保存时执行 017；模型或索引故障不能继续触发 Agent。"""
         try:
             async with self._pipeline_factory(self._history_service) as pipeline:
-                return await pipeline.prepare(
-                    session_id, user_id, current_message_id=current_message_id,
-                )
+                return await pipeline.prepare(request)
         except HTTPException:
             raise
         except Exception as exc:
             raise HTTPException(503, f"意图处理失败（{type(exc).__name__}）") from None
 
-    def _pipeline_extra(self, prepared: PreparedIntentTurn) -> dict:
+    def _pipeline_extra(self, prepared: PreparedIntentTurn, request: RequestContext) -> dict:
         """保存可调试层级与分支，不保存密钥、原始模型响应或可信身份。"""
         decision = prepared.decision
         return {"intent_pipeline": {
+            "request_id": request.request_id,
+            "trace_id": request.trace_id,
             "dispatch_target": self.COORDINATOR_AGENT_NAME if decision is not None else None,
             "branch": prepared.branch,
             "fast_layers": [layer.value for layer in prepared.fast_decision.attempted_layers],
@@ -203,24 +248,28 @@ class ChatAgentExecutor:
         5. L2 保存：将更新后的 AgentState 持久化回 agentscope_session。
         """
         # 步骤 1：在 L1 保存原问题并完成 017 预处理；失败时不运行 Agent。
-        prepared = await self._prepare_turn(session_id, user_id, message)
+        request = self._save_user_turn(session_id, user_id, message)
+        active_name = self._active_agent_for_turn(request, message)
+        if active_name is not None:
+            return await self._continue_active_turn(request, active_name, message)
+        prepared = await self._prepare_turn(request)
         if prepared.branch == "needs_context":
             text = self._clarification(prepared)
             msg_id = self._history_service.save_assistant_message(
-                conversation_id=session_id, user_id=user_id, content=text,
-                agent_name=self.COORDINATOR_AGENT_NAME, extra=self._pipeline_extra(prepared),
+                conversation_id=request.session_id, user_id=request.user_id, content=text,
+                agent_name=self.COORDINATOR_AGENT_NAME, extra=self._pipeline_extra(prepared, request),
             )
             return text, msg_id
 
         # 步骤 2：在 L2 读取历史 AgentState（若为新会话则初始化全新状态）
-        state_session_id = self._state_session_id(session_id, user_id)
+        state_session_id = self._state_session_id(request.session_id, request.user_id)
         agent: Agent | None = None
         try:
             agent_state = self._session_store.load_agent_state(
                 state_session_id, agent_name=self.COORDINATOR_AGENT_NAME,
             )
             if agent_state is None:
-                agent_state = AgentState(session_id=session_id)
+                agent_state = AgentState(session_id=request.session_id)
 
             # 步骤 3：运行 AgentScope Agent 执行推理
             agent = self._build_agent(state=agent_state, prepared=prepared, stream=False)
@@ -233,11 +282,11 @@ class ChatAgentExecutor:
 
         # 先保存业务可见回复；失败时不得写入一份看不到的 AgentState。
         msg_id = self._history_service.save_assistant_message(
-            conversation_id=session_id,
-            user_id=user_id,
+            conversation_id=request.session_id,
+            user_id=request.user_id,
             content=reply_text,
             agent_name=self.COORDINATOR_AGENT_NAME,
-            extra=self._pipeline_extra(prepared),
+            extra=self._pipeline_extra(prepared, request),
         )
 
         # 再保存 AgentState；此处失败仍可能留下已保存的业务回复。
@@ -262,12 +311,25 @@ class ChatAgentExecutor:
         5. L2 保存：流式结束后将最新 AgentState 存回 agentscope_session。
         6. SSE 完成：推送 event: message_id 通知前端接收完毕。
         """
-        prepared = await self._prepare_turn(session_id, user_id, message)
+        request = self._save_user_turn(session_id, user_id, message)
+        active_name = self._active_agent_for_turn(request, message)
+        if active_name is not None:
+            text, msg_id = await self._continue_active_turn(
+                request, active_name, message,
+            )
+
+            async def continuation_events() -> AsyncGenerator[str, None]:
+                data_lines = "\n".join(f"data: {line}" for line in text.split("\n"))
+                yield f"event: message\n{data_lines}\n\n"
+                yield f"event: message_id\ndata: {msg_id}\n\n"
+
+            return continuation_events()
+        prepared = await self._prepare_turn(request)
         if prepared.branch == "needs_context":
             text = self._clarification(prepared)
             msg_id = self._history_service.save_assistant_message(
-                conversation_id=session_id, user_id=user_id, content=text,
-                agent_name=self.COORDINATOR_AGENT_NAME, extra=self._pipeline_extra(prepared),
+                conversation_id=request.session_id, user_id=request.user_id, content=text,
+                agent_name=self.COORDINATOR_AGENT_NAME, extra=self._pipeline_extra(prepared, request),
             )
 
             async def clarification_events() -> AsyncGenerator[str, None]:
@@ -277,15 +339,15 @@ class ChatAgentExecutor:
                 yield f"event: message_id\ndata: {msg_id}\n\n"
 
             return clarification_events()
-        return self._stream_prepared_turn(session_id, user_id, prepared)
+        return self._stream_prepared_turn(request, prepared)
 
     async def _stream_prepared_turn(
-        self, session_id: str, user_id: str, prepared: PreparedIntentTurn,
+        self, request: RequestContext, prepared: PreparedIntentTurn,
     ) -> AsyncGenerator[str, None]:
         """只在预处理成功后执行 Agent，保留 005 的 message/message_id 事件。"""
 
         # 步骤 2：在 L2 读取历史 AgentState（若为新会话则初始化全新状态）
-        state_session_id = self._state_session_id(session_id, user_id)
+        state_session_id = self._state_session_id(request.session_id, request.user_id)
         accumulated_chunks: list[str] = []
         agent: Agent | None = None
 
@@ -294,7 +356,7 @@ class ChatAgentExecutor:
                 state_session_id, agent_name=self.COORDINATOR_AGENT_NAME,
             )
             if agent_state is None:
-                agent_state = AgentState(session_id=session_id)
+                agent_state = AgentState(session_id=request.session_id)
 
             # 步骤 3：流式运行 AgentScope Agent 并逐块产出
             agent = self._build_agent(state=agent_state, prepared=prepared, stream=True)
@@ -328,11 +390,11 @@ class ChatAgentExecutor:
         # 先保存业务可见回复；失败时不提交新 AgentState。
         try:
             msg_id = self._history_service.save_assistant_message(
-                conversation_id=session_id,
-                user_id=user_id,
+                conversation_id=request.session_id,
+                user_id=request.user_id,
                 content=full_reply_text,
                 agent_name=self.COORDINATOR_AGENT_NAME,
-                extra=self._pipeline_extra(prepared),
+                extra=self._pipeline_extra(prepared, request),
             )
 
             # 再保存 AgentState；若失败，SSE 不报完成。

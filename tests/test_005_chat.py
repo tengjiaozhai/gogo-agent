@@ -31,9 +31,9 @@ from agentscope.state import AgentState
 async def offline_pipeline_factory(history_service):
     """005 只验聊天存储和 AgentState，用固定意图结果隔离 017 外部模型。"""
     class OfflinePipeline:
-        async def prepare(self, session_id, user_id, *, current_message_id):
+        async def prepare(self, request):
             query = RewriteContextBuilder(history_service).build_rewrite_context(
-                session_id, user_id, current_message_id=current_message_id,
+                request.session_id, request.user_id, current_message_id=request.request_id,
             ).query
             result = IntentResult(
                 intents=[IntentItem(

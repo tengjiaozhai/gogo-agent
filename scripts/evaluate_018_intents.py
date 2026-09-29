@@ -9,6 +9,7 @@ from pathlib import Path
 from gogo_agent.chat.repository import InMemoryChatHistoryRepository
 from gogo_agent.chat.service import ChatHistoryService
 from gogo_agent.intent.runtime import open_intent_pipeline
+from gogo_agent.request_context import RequestContext
 
 
 CORPUS_PATH = Path(__file__).resolve().parents[1] / "docs/契约样例/018-意图回归语料.json"
@@ -43,9 +44,10 @@ async def run(selected: str) -> int:
                         session_id, user_id, message["content"], agent_name="TeachingContext",
                     )
             message_id = history.save_user_message(session_id, user_id, case["question"])
+            request = RequestContext(user_id=user_id, session_id=session_id, request_id=message_id)
             try:
                 prepared = await pipeline.prepare(
-                    session_id, user_id, current_message_id=message_id,
+                    request,
                     reference_date=reference_date,
                 )
             except Exception as exc:

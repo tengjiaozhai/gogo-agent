@@ -35,10 +35,25 @@ from gogo_agent.intent import (
     RewriteContextBuilder,
     RewriteResult,
 )
+from gogo_agent.request_context import RequestContext
 from tests.test_010_011_intent import FixedModel
 
 
 REFERENCE_DATE = date(2026, 9, 28)
+
+
+def request_context(request_id: str, *, user_id: str = "user-1") -> RequestContext:
+    return RequestContext(
+        user_id=user_id, session_id="session-1", request_id=request_id,
+        trace_id=f"trace-{request_id}",
+    )
+
+
+def pipeline_request(session_id: str, request_id: str) -> RequestContext:
+    return RequestContext(
+        user_id="user-1", session_id=session_id, request_id=request_id,
+        trace_id=f"trace-{request_id}",
+    )
 
 
 def one_intent(category: IntentCategory) -> IntentResult:
@@ -122,7 +137,7 @@ async def test_fast_l1_and_l2_hits_skip_rewrite_and_model():
     vector = ProbeVector()
     pipeline = pipeline_for(history, rewriter, vector)
     first_id = history.save_user_message("session-017", "user-1", "查机票")
-    l1 = await pipeline.prepare("session-017", "user-1", current_message_id=first_id, reference_date=REFERENCE_DATE)
+    l1 = await pipeline.prepare(pipeline_request("session-017", first_id), reference_date=REFERENCE_DATE)
     assert l1.branch == "fast"
     assert l1.fast_decision.hit_layer is RecognitionLayer.RULE
     assert l1.effective_question.question == "查机票"
@@ -131,7 +146,7 @@ async def test_fast_l1_and_l2_hits_skip_rewrite_and_model():
     vector.hit = IntentCategory.APPROVAL_QUERY
     second_question = "我交上去那个流程现在走到哪一步了"
     second_id = history.save_user_message("session-017", "user-1", second_question)
-    l2 = await pipeline.prepare("session-017", "user-1", current_message_id=second_id, reference_date=REFERENCE_DATE)
+    l2 = await pipeline.prepare(pipeline_request("session-017", second_id), reference_date=REFERENCE_DATE)
     assert l2.branch == "fast"
     assert l2.fast_decision.hit_layer is RecognitionLayer.VECTOR
     assert vector.calls == [second_question]
@@ -149,7 +164,7 @@ async def test_miss_rewrites_once_then_full_l3_recognizes_ordered_multi_intent()
         IntentCategory.TRAVEL_ORDER_QUERY, IntentCategory.ITINERARY_PLANNING,
     ).model_dump(mode="json"))
     prepared = await pipeline_for(history, rewriter, vector, model).prepare(
-        "session-017", "user-1", current_message_id=message_id,
+        pipeline_request("session-017", message_id),
         reference_date=REFERENCE_DATE,
     )
     assert prepared.branch == "rewritten"
@@ -173,7 +188,7 @@ async def test_l0_strong_conjunction_skips_vector_and_reaches_l3():
         IntentCategory.POLICY_QUERY, IntentCategory.REIMBURSEMENT,
     ).model_dump(mode="json"))
     prepared = await pipeline_for(history, rewriter, vector, model).prepare(
-        "l0-017", "user-1", current_message_id=message_id,
+        pipeline_request("l0-017", message_id),
         reference_date=REFERENCE_DATE,
     )
     assert prepared.branch == "rewritten"
@@ -193,7 +208,7 @@ async def test_missing_context_or_rewrite_failure_never_dispatches():
     vector = ProbeVector()
     missing = ProbeRewriter()
     prepared = await pipeline_for(history, missing, vector).prepare(
-        "session-017", "user-1", current_message_id=message_id,
+        pipeline_request("session-017", message_id),
         reference_date=REFERENCE_DATE,
     )
     assert prepared.branch == "needs_context"
@@ -204,7 +219,7 @@ async def test_missing_context_or_rewrite_failure_never_dispatches():
     failure_id = history.save_user_message("failure-017", "user-1", "帮我写一个Python函数")
     with pytest.raises(RuntimeError, match="deliberately failed"):
         await pipeline_for(history, failing, ProbeVector()).prepare(
-            "failure-017", "user-1", current_message_id=failure_id,
+            pipeline_request("failure-017", failure_id),
             reference_date=REFERENCE_DATE,
         )
     assert len(failing.calls) == 1
@@ -219,8 +234,8 @@ class FakeChild:
         self.fail = fail
         self.calls = []
 
-    async def run(self, item, question, completed):
-        self.calls.append((item.intent, question.question, [step.output for step in completed]))
+    async def run(self, item, question, context, completed):
+        self.calls.append((item.intent, question.question, [step.output for step in completed], context))
         if self.fail:
             raise RuntimeError("fake child failed")
         return f"{item.intent.value} 已模拟完成"
@@ -235,8 +250,8 @@ class PausingChild(FakeChild):
         self.two_entered = asyncio.Event()
         self.release = asyncio.Event()
 
-    async def run(self, item, question, completed):
-        self.calls.append((item.intent, question.question, [step.output for step in completed]))
+    async def run(self, item, question, context, completed):
+        self.calls.append((item.intent, question.question, [step.output for step in completed], context))
         self.entered.set()
         if len(self.calls) == 2:
             self.two_entered.set()
@@ -253,19 +268,27 @@ async def test_master_preserves_query_then_plan_order_and_reuses_same_write_requ
         IntentCategory.ITINERARY_PLANNING: plan,
     }, InMemoryWriteLedger())
     result = two_intents(IntentCategory.TRAVEL_ORDER_QUERY, IntentCategory.ITINERARY_PLANNING)
+    first_context = request_context("message-1")
+    repeated_context = RequestContext(
+        user_id=first_context.user_id, session_id=first_context.session_id,
+        request_id=first_context.request_id, trace_id="trace-repeated",
+    )
     first = await master.execute(
         result, QueryInput(question="先查订单再规划"),
-        user_id="user-1", session_id="session-1", request_id="message-1",
+        context=first_context,
     )
     repeated = await master.execute(
         result, QueryInput(question="先查订单再规划"),
-        user_id="user-1", session_id="session-1", request_id="message-1",
+        context=repeated_context,
     )
     assert first.status == repeated.status == "completed"
     assert [step.agent_name for step in first.steps] == ["ManageAgent", "PlanAgent"]
     assert plan.calls[0][2] == ["travel_order_query 已模拟完成"]
     assert len(query.calls) == 2 and len(plan.calls) == 1
     assert repeated.steps[1].reused is True
+    assert [step.trace_id for step in first.steps] == [first_context.trace_id] * 2
+    assert [step.trace_id for step in repeated.steps] == [repeated_context.trace_id] * 2
+    assert first.trace_id == first_context.trace_id and repeated.trace_id == repeated_context.trace_id
     assert "1. ManageAgent" in first.summary and "2. PlanAgent" in first.summary
 
 
@@ -281,10 +304,11 @@ async def test_plan_then_booking_dependency_failure_and_write_retry_boundary():
     for attempt in range(2):
         report = await master.execute(
             result, QueryInput(question="先规划后预订"),
-            user_id="user-1", session_id="session-1", request_id="message-2",
+            context=request_context("message-2"),
         )
         assert report.status == "failed"
         assert [step.status for step in report.steps] == ["failed", "skipped"]
+        assert all(step.trace_id == report.trace_id for step in report.steps)
         assert "未完成" in report.summary
         if attempt:
             assert report.steps[0].reused is True
@@ -303,7 +327,7 @@ async def test_successful_plan_then_booking_uses_previous_result_and_each_write_
     for attempt in range(2):
         report = await master.execute(
             result, QueryInput(question="先规划后预订"),
-            user_id="user-1", session_id="session-1", request_id="message-success",
+            context=request_context("message-success"),
         )
         assert report.status == "completed"
         if attempt:
@@ -325,7 +349,7 @@ async def test_partial_result_and_concurrent_duplicate_write_calls_once():
     async def run():
         return await master.execute(
             result, QueryInput(question="先规划后预订"),
-            user_id="user-1", session_id="session-1", request_id="message-3",
+            context=request_context("message-3"),
         )
 
     first = asyncio.create_task(run())
@@ -353,7 +377,7 @@ async def test_different_write_requests_can_run_concurrently():
     async def run(request_id):
         return await master.execute(
             result, QueryInput(question="规划行程"),
-            user_id="user-1", session_id="session-1", request_id=request_id,
+            context=request_context(request_id),
         )
 
     first = asyncio.create_task(run("message-a"))

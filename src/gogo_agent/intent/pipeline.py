@@ -6,6 +6,8 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from gogo_agent.request_context import RequestContext
+
 from .context import RewriteContextBuilder
 from .models import QueryInput, RecognitionDecision, RewriteResult
 from .rules import _affirmative_text
@@ -92,16 +94,14 @@ class IntentPipelineService:
 
     async def prepare(
         self,
-        session_id: str,
-        user_id: str,
+        request: RequestContext,
         *,
-        current_message_id: str,
         reference_date: date | None = None,
     ) -> PreparedIntentTurn:
         """先原句快筛；未命中时只改写一次，再用完整模式识别。"""
         context = self._context_builder.build_rewrite_context(
-            session_id, user_id,
-            current_message_id=current_message_id,
+            request.session_id, request.user_id,
+            current_message_id=request.request_id,
             reference_date=reference_date,
         )
         if _requires_rewrite_before_fast(context.query):

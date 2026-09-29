@@ -19,6 +19,7 @@
 - [`src/gogo_agent/cli.py`](src/gogo_agent/cli.py) — 装配仅含日期工具的 Agent 并提供终端入口。
 - [`src/gogo_agent/tools.py`](src/gogo_agent/tools.py) — 提供不依赖模型的本地日期工具。
 - [`src/gogo_agent/api.py`](src/gogo_agent/api.py) — 提供后端唯一 FastAPI 应用入口、挂载认证与会话路由、Scalar 交互式 API 文档及健康检查。
+- [`src/gogo_agent/request_context.py`](src/gogo_agent/request_context.py) — 定义服务端创建的不可变请求身份、会话、计划引用和追踪参数。
 
 ## src/gogo_agent/auth
 
@@ -33,10 +34,11 @@
 ## src/gogo_agent/chat
 
 - [`src/gogo_agent/chat/__init__.py`](src/gogo_agent/chat/__init__.py) — 导出会话消息服务、执行器与路由入口。
+- [`src/gogo_agent/chat/continuation.py`](src/gogo_agent/chat/continuation.py) — 定义接收可信请求上下文的活跃 Agent 续跑接口，并判定完整信号或无效记录的入口。
 - [`src/gogo_agent/chat/models.py`](src/gogo_agent/chat/models.py) — 定义会话、消息领域模型及请求响应视图 DTO。
 - [`src/gogo_agent/chat/repository.py`](src/gogo_agent/chat/repository.py) — 实现内存与 SQL 的业务历史限量查询、AgentState 保存读取及删除。
 - [`src/gogo_agent/chat/service.py`](src/gogo_agent/chat/service.py) — 编排会话创建、鉴权后的全量或最近历史读取、标题提取及反馈。
-- [`src/gogo_agent/chat/executor.py`](src/gogo_agent/chat/executor.py) — 保存本轮消息并执行意图预处理，统一交给 GoGo 协调入口后持久化状态和输出 JSON/SSE。
+- [`src/gogo_agent/chat/executor.py`](src/gogo_agent/chat/executor.py) — 保存本轮消息后建立可信请求上下文，选择可注入活跃 Agent 续跑或意图流水线，并输出 JSON/SSE。
 - [`src/gogo_agent/chat/dependencies.py`](src/gogo_agent/chat/dependencies.py) — 提供会话仓储、L2 记忆库与执行器的 FastAPI 依赖注入。
 - [`src/gogo_agent/chat/router.py`](src/gogo_agent/chat/router.py) — 定义 /api/chat 的会话接口，并在 SSE 建立前完成对话预处理。
 
@@ -53,8 +55,8 @@
 - [`src/gogo_agent/intent/__init__.py`](src/gogo_agent/intent/__init__.py) — 导出改写、识别、流水线和顺序执行的公开类型及入口。
 - [`src/gogo_agent/intent/models.py`](src/gogo_agent/intent/models.py) — 定义改写、意图及三层识别结果的 Pydantic 契约和跨字段校验。
 - [`src/gogo_agent/intent/context.py`](src/gogo_agent/intent/context.py) — 构造经会话归属校验和长度裁剪的最近历史与当前问题快照。
-- [`src/gogo_agent/intent/execution.py`](src/gogo_agent/intent/execution.py) — 按识别事项顺序委派可注入子 Agent，聚合部分失败并模拟同请求写调用去重。
-- [`src/gogo_agent/intent/pipeline.py`](src/gogo_agent/intent/pipeline.py) — 统一快筛、短追问指代守卫、条件改写和完整识别，返回可观察分支。
+- [`src/gogo_agent/intent/execution.py`](src/gogo_agent/intent/execution.py) — 显式传递可信上下文，按事项顺序委派可注入子 Agent，聚合结果与追踪并模拟写去重。
+- [`src/gogo_agent/intent/pipeline.py`](src/gogo_agent/intent/pipeline.py) — 用可信请求上下文读取本轮历史，统一快筛、短追问守卫、条件改写和完整识别。
 - [`src/gogo_agent/intent/rules.py`](src/gogo_agent/intent/rules.py) — 执行 L0/L1 优先级规则、复合弃权及明确否定动作的排除。
 - [`src/gogo_agent/intent/runtime.py`](src/gogo_agent/intent/runtime.py) — 从共用环境配置装配聊天模型、embedding、Qdrant 与一次请求的识别流水线。
 - [`src/gogo_agent/intent/seed.json`](src/gogo_agent/intent/seed.json) — 保存从 Java YAML 移植的 16 类 68 条运行时意图种子。
@@ -79,6 +81,8 @@
 - [`docs/契约样例/018-意图回归语料.json`](docs/契约样例/018-意图回归语料.json) — 保存误路由与正确样例的固定历史、期望改写和命中层。
 - [`docs/契约样例/018-意图误路由修复.md`](docs/契约样例/018-意图误路由修复.md) — 记录否定动作、短追问和三亚出差等修复前后差异与验收。
 - [`docs/契约样例/019-主协调入口与直跳取舍.md`](docs/契约样例/019-主协调入口与直跳取舍.md) — 记录不启用高置信直跳的依据、当前协调入口验收及后续候选条件。
+- [`docs/契约样例/020-执行顺序与续跑边界.md`](docs/契约样例/020-执行顺序与续跑边界.md) — 对照新请求与活跃 Agent 续跑的序列、标题/历史时点及当前验收边界。
+- [`docs/契约样例/021-请求上下文与信任边界.md`](docs/契约样例/021-请求上下文与信任边界.md) — 区分认证上下文与模型可见业务线索，记录传参、伪造身份及追踪验收。
 
 ## docs/架构
 
@@ -103,6 +107,7 @@
 
 ## docs/research
 
+- [`docs/research/agentscope-2.0.8-context-evaluation.md`](docs/research/agentscope-2.0.8-context-evaluation.md) — 对照 AgentScope Python 2.0.8 与项目的身份传递、改写历史和 Agent 状态管理边界。
 - [`docs/research/python-3.14-compatibility-assessment.md`](docs/research/python-3.14-compatibility-assessment.md) — 评估 Python 3.14 稳定性及对阶段 A 至阶段 I 实施的潜在兼容性影响。
 
 ## exercises
@@ -118,6 +123,12 @@
 - [`scripts/build_intent_index.py`](scripts/build_intent_index.py) — 从统一运行配置构建或复用版本化意图索引并输出固定句探针。
 - [`scripts/demo_016_017_pipeline.py`](scripts/demo_016_017_pipeline.py) — 用真实规则、Qdrant、模型和内存假子 Agent 演示四层分支与顺序执行。
 - [`scripts/evaluate_018_intents.py`](scripts/evaluate_018_intents.py) — 用真实模型和 Qdrant 逐条评估 018 固定语料并打印预期差异。
+- [`scripts/demo_020_execution_order.py`](scripts/demo_020_execution_order.py) — 用离线模型和内存状态演示新请求顺序、同会话恢复及活跃 Agent 续跑回退。
+- [`scripts/demo_021_request_context.py`](scripts/demo_021_request_context.py) — 用本地 Token、假子 Agent 和假工具演示可信身份传递及多步骤追踪。
+
+## output
+
+- [`output/l0_l1_intent_routing.html`](output/l0_l1_intent_routing.html) — 提供 L0/L1 意图路由和规则否决条件的独立交互图解。
 
 ## tests
 
@@ -135,5 +146,7 @@
 - [`tests/test_016_017_pipeline.py`](tests/test_016_017_pipeline.py) — 验证条件改写、假子 Agent 顺序和去重、HTTP JSON/SSE 与失败出口。
 - [`tests/test_018_intent_regression.py`](tests/test_018_intent_regression.py) — 验证否定规则、上下文短追问守卫和改写动作保真。
 - [`tests/test_019_routing.py`](tests/test_019_routing.py) — 验证 L1/L2/L3 结果均进入 GoGo 协调入口，不因高置信绕过会话归属或提示词。
+- [`tests/test_020_execution_order.py`](tests/test_020_execution_order.py) — 记录新请求与 GoGo 状态恢复顺序，并用假活跃 Agent 验证实际执行器续跑和回退。
+- [`tests/test_021_request_context.py`](tests/test_021_request_context.py) — 用真实登录 Token 和假工具验收伪造用户 ID 隔离及子步骤追踪。
 - [`tests/test_mariadb_integration.py`](tests/test_mariadb_integration.py) — 验证真实 MariaDB 数据库连接、用户密码迁移、会话消息与 agentscope_session 存取。
 - [`tests/test_redis_integration.py`](tests/test_redis_integration.py) — 验证真实 172.22.22.123 Redis 连接、30 天 TTL、跨实例 Token 持久化与平滑降级。

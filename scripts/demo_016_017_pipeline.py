@@ -12,6 +12,7 @@ from gogo_agent.intent import (
     OrderedMasterCoordinator,
 )
 from gogo_agent.intent.runtime import open_intent_pipeline
+from gogo_agent.request_context import RequestContext
 
 
 REFERENCE_DATE = date(2026, 9, 28)
@@ -32,7 +33,7 @@ class DemoChild:
         self.writes = writes
         self.calls = 0
 
-    async def run(self, item, question, completed):
+    async def run(self, item, question, context, completed):
         self.calls += 1
         prior = f"，承接 {completed[-1].agent_name}" if completed else ""
         return f"仅模拟处理 {item.intent.value}{prior}"
@@ -55,11 +56,13 @@ async def show_case(case: str, history: ChatHistoryService, pipeline) -> None:
 
     question = CASES[case]
     message_id = history.save_user_message(session_id, user_id, question)
+    request = RequestContext(user_id=user_id, session_id=session_id, request_id=message_id)
     prepared = await pipeline.prepare(
-        session_id, user_id, current_message_id=message_id,
+        request,
         reference_date=REFERENCE_DATE,
     )
     print(f"\n[{case.upper()}] 原问题：{question}")
+    print("  服务端追踪 ID：", request.trace_id)
     print("  分支：", prepared.branch)
     print("  原句快筛：", [layer.value for layer in prepared.fast_decision.attempted_layers])
     print("  快筛原因：", prepared.fast_decision.reason)
@@ -84,11 +87,10 @@ async def show_case(case: str, history: ChatHistoryService, pipeline) -> None:
             IntentCategory.TRAVEL_ORDER_QUERY: manage,
             IntentCategory.ITINERARY_PLANNING: plan,
         }, InMemoryWriteLedger())
-        request = dict(user_id=user_id, session_id=session_id, request_id=message_id)
         result = prepared.decision.result
         effective = prepared.effective_question
-        first = await master.execute(result, effective, **request)
-        repeated = await master.execute(result, effective, **request)
+        first = await master.execute(result, effective, context=request)
+        repeated = await master.execute(result, effective, context=request)
         print("  假 Master 首次执行：", first.status, first.summary.replace("\n", "；"))
         print("  同请求再次执行：", repeated.status, "规划写调用次数=", plan.calls)
 

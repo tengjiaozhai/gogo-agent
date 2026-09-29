@@ -18,6 +18,7 @@ from gogo_agent.intent import (
     QueryRewriter,
     RewriteContext,
 )
+from gogo_agent.request_context import RequestContext
 from tests.test_010_011_intent import FixedModel
 from tests.test_016_017_pipeline import ProbeRewriter, ProbeVector, pipeline_for
 
@@ -26,6 +27,10 @@ CORPUS = json.loads(
     (Path(__file__).resolve().parents[1] / "docs/契约样例/018-意图回归语料.json").read_text(encoding="utf-8")
 )
 CASES = {case["id"]: case for case in CORPUS["cases"]}
+
+
+def pipeline_request(session_id: str, request_id: str) -> RequestContext:
+    return RequestContext(user_id="u1", session_id=session_id, request_id=request_id)
 
 
 def test_corpus_has_unique_cases_and_valid_category_contract():
@@ -78,7 +83,7 @@ async def test_contextual_followup_rewrites_before_a_false_positive_vector_hit()
     vector = ProbeVector(hit=IntentCategory.FLIGHT_SEARCH)
     rewriter = ProbeRewriter("请规划2026年9月29日从北京去上海的两天行程，包括交通和酒店。")
     prepared = await pipeline_for(history, rewriter, vector).prepare(
-        "context-018", "u1", current_message_id=message_id,
+        pipeline_request("context-018", message_id),
         reference_date=date.fromisoformat(CORPUS["reference_date"]),
     )
     assert prepared.branch == "rewritten"
@@ -97,7 +102,7 @@ async def test_contextual_followup_without_history_requests_context_without_mode
     vector = ProbeVector(hit=IntentCategory.FLIGHT_SEARCH)
     rewriter = ProbeRewriter("不应调用")
     prepared = await pipeline_for(history, rewriter, vector).prepare(
-        "missing-018", "u1", current_message_id=message_id,
+        pipeline_request("missing-018", message_id),
         reference_date=date.fromisoformat(CORPUS["reference_date"]),
     )
     assert prepared.branch == "needs_context"
@@ -115,7 +120,7 @@ async def test_elliptic_flight_noun_still_rewrites_with_history():
     vector = ProbeVector(hit=IntentCategory.FLIGHT_SEARCH)
     rewriter = ProbeRewriter("请查询2026年9月29日从北京到上海的航班。")
     prepared = await pipeline_for(history, rewriter, vector).prepare(
-        "elliptic-018", "u1", current_message_id=message_id,
+        pipeline_request("elliptic-018", message_id),
         reference_date=date.fromisoformat(CORPUS["reference_date"]),
     )
     assert prepared.branch == "rewritten"
@@ -133,7 +138,7 @@ async def test_existing_vector_seed_is_not_blocked_by_context_guard():
     vector = ProbeVector(hit=IntentCategory.APPROVAL_QUERY)
     rewriter = ProbeRewriter("不应调用")
     prepared = await pipeline_for(history, rewriter, vector).prepare(
-        "vector-018", "u1", current_message_id=message_id,
+        pipeline_request("vector-018", message_id),
         reference_date=date.fromisoformat(CORPUS["reference_date"]),
     )
     assert prepared.branch == "fast"

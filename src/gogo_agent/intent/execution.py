@@ -6,6 +6,8 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from gogo_agent.request_context import RequestContext
+
 from .models import IntentCategory, IntentItem, IntentResult, QueryInput
 
 
@@ -15,6 +17,7 @@ class IntentExecutionStep(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     index: int = Field(..., ge=0, description="事项在有序意图列表中的零基位置")
+    trace_id: str = Field(..., min_length=1, description="本轮服务端生成的追踪标识，与子 Agent 调用关联")
     intent: IntentCategory = Field(..., description="当前事项的意图类别")
     agent_name: str = Field(..., min_length=1, description="实际负责或预计负责该事项的子 Agent 名称")
     status: Literal["completed", "failed", "skipped"] = Field(..., description="事项已完成、失败或因前项失败跳过")
@@ -28,6 +31,7 @@ class IntentExecutionReport(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    trace_id: str = Field(..., min_length=1, description="整轮请求的服务端追踪标识")
     status: Literal["completed", "partial", "failed"] = Field(..., description="整轮全部完成、部分完成或全部失败")
     steps: list[IntentExecutionStep] = Field(..., min_length=1, description="按原有 intents 顺序排列的每项执行结果")
     summary: str = Field(..., min_length=1, description="含明确失败范围的聚合结果文字")
@@ -43,6 +47,7 @@ class ChildIntentAgent(Protocol):
         self,
         item: IntentItem,
         question: QueryInput,
+        context: RequestContext,
         completed: tuple[IntentExecutionStep, ...],
     ) -> str: ...
 
@@ -66,7 +71,10 @@ class InMemoryWriteLedger:
             lock = self._locks.setdefault(key, asyncio.Lock())
         async with lock:
             if key in self._steps:
-                return self._steps[key].model_copy(update={"reused": True})
+                return self._steps[key].model_copy(update={
+                    "reused": True,
+                    "trace_id": pending.trace_id,
+                })
             self._steps[key] = pending
             step = await operation()
             self._steps[key] = step
@@ -89,42 +97,44 @@ class OrderedMasterCoordinator:
         result: IntentResult,
         question: QueryInput,
         *,
-        user_id: str,
-        session_id: str,
-        request_id: str,
+        context: RequestContext,
     ) -> IntentExecutionReport:
         """用服务端可信标识去重写调用，并把后续依赖失败标成跳过。"""
-        if not user_id or not session_id or not request_id:
-            raise ValueError("顺序执行需要可信用户、会话和请求标识")
+        if not isinstance(context, RequestContext):
+            raise TypeError("顺序执行必须接收服务端 RequestContext")
         steps: list[IntentExecutionStep] = []
         for index, item in enumerate(result.intents):
             child = self._children.get(item.intent)
             if child is None:
                 steps.append(IntentExecutionStep(
-                    index=index, intent=item.intent, agent_name="未装配",
+                    index=index, trace_id=context.trace_id,
+                    intent=item.intent, agent_name="未装配",
                     status="failed", output=None, error_type="AgentUnavailable",
                 ))
                 break
 
             async def invoke() -> IntentExecutionStep:
                 try:
-                    output = await child.run(item, question, tuple(steps))
+                    output = await child.run(item, question, context, tuple(steps))
                     if not isinstance(output, str) or not output.strip():
                         raise ValueError("子 Agent 未提供可确认的完成结果")
                 except Exception as exc:
                     return IntentExecutionStep(
-                        index=index, intent=item.intent, agent_name=child.name,
+                        index=index, trace_id=context.trace_id,
+                        intent=item.intent, agent_name=child.name,
                         status="failed", output=None, error_type=type(exc).__name__,
                     )
                 return IntentExecutionStep(
-                    index=index, intent=item.intent, agent_name=child.name,
+                    index=index, trace_id=context.trace_id,
+                    intent=item.intent, agent_name=child.name,
                     status="completed", output=output, error_type=None,
                 )
 
             if child.writes:
-                key = (user_id, session_id, request_id, index, item.intent)
+                key = (context.user_id, context.session_id, context.request_id, index, item.intent)
                 pending = IntentExecutionStep(
-                    index=index, intent=item.intent, agent_name=child.name,
+                    index=index, trace_id=context.trace_id,
+                    intent=item.intent, agent_name=child.name,
                     status="failed", output=None, error_type="OutcomeUnknown",
                 )
                 step = await self._write_ledger.run_once(key, invoke, pending)
@@ -138,7 +148,8 @@ class OrderedMasterCoordinator:
             item = result.intents[index]
             child = self._children.get(item.intent)
             steps.append(IntentExecutionStep(
-                index=index, intent=item.intent,
+                index=index, trace_id=context.trace_id,
+                intent=item.intent,
                 agent_name=child.name if child else "未装配",
                 status="skipped", output=None, error_type="PreviousStepFailed",
             ))
@@ -151,4 +162,7 @@ class OrderedMasterCoordinator:
         if status != "completed":
             first_unfinished = next(step for step in steps if step.status != "completed")
             lines.append(f"第 {first_unfinished.index + 1} 项未完成；后续事项未执行。")
-        return IntentExecutionReport(status=status, steps=steps, summary="\n".join(lines))
+        return IntentExecutionReport(
+            trace_id=context.trace_id,
+            status=status, steps=steps, summary="\n".join(lines),
+        )
