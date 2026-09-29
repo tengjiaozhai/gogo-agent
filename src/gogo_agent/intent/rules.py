@@ -30,7 +30,35 @@ _ACTION_PATTERN = re.compile(
     r"|(?P<cancel>取消|撤回)|(?P<modify>修改|变更|改签|退票)"
     r"|(?P<book>预[定订]|下单|订(?!单))"
 )
-_NEGATED_ACTION_PREFIXES = ("不想", "不要", "不用", "无需", "不需", "不打算", "不准备", "别")
+_NEGATED_ACTION_PREFIXES = (
+    "不想", "不要", "不用", "无需", "不需", "不需要", "不打算", "不准备", "不能", "不再", "别", "不",
+)
+_NEGATED_ACTION_PATTERN = re.compile(
+    rf"(?:{'|'.join(re.escape(prefix) for prefix in _NEGATED_ACTION_PREFIXES)})"
+    rf"(?=(?:{_ACTION_PATTERN.pattern}))"
+    r"[^，。；！？!?;,、]*"
+)
+_DOUBLE_NEGATED_ACTION_PATTERN = re.compile(
+    rf"(?:不能|不可|不该|不得|不应)不(?=(?:{_ACTION_PATTERN.pattern}))"
+)
+_NEGATED_THEN_AFFIRMATIVE = re.compile(
+    rf"但(?:是)?(?=[^，。；！？!?;,、]{{0,3}}(?:{_ACTION_PATTERN.pattern}))"
+)
+
+
+def _affirmative_text(text: str) -> str:
+    """仅保留肯定请求；否定动作所在子句不参与快速层分类。"""
+    text = _NEGATED_THEN_AFFIRMATIVE.sub("，", text)
+    double_negations = [match.span() for match in _DOUBLE_NEGATED_ACTION_PATTERN.finditer(text)]
+
+    def retain_or_remove(match: re.Match[str]) -> str:
+        if any(start <= match.start() < end for start, end in double_negations):
+            return match.group(0)
+        return ""
+
+    return _NEGATED_ACTION_PATTERN.sub(retain_or_remove, text)
+
+
 _GREET = (
     r"你好|您好|哈喽|哈啰|嗨|hi|hello|hey|早上好|早安|上午好|中午好|下午好|晚上好"
     r"|在吗|在不在|在么|在不|有人吗|有人在吗|你在吗|请问|请教一下|打扰一下|打扰了|方便吗"
@@ -161,16 +189,28 @@ class IntentRuleMatcher:
     def match(self, query: QueryInput) -> FastMatch:
         if not isinstance(query, QueryInput):
             raise TypeError("规则匹配需要经过校验的 QueryInput")
-        text = query.question
-        if len(text) >= 10:
-            conjunction = _STRONG_PATTERN.search(text)
+        original = query.question
+        if len(original) >= 10:
+            conjunction = _STRONG_PATTERN.search(original)
             if conjunction is not None and conjunction.start() >= 4:
                 return FastMatch(
                     status=MatchStatus.AMBIGUOUS,
                     result=None,
                     reason=f"L0 在句中发现强连接词「{conjunction.group(0)}」，疑似复合意图",
                 )
-
+        if _DOUBLE_NEGATED_ACTION_PATTERN.search(original):
+            return FastMatch(
+                status=MatchStatus.AMBIGUOUS, result=None,
+                reason="L1 出现双重否定动作，规则不裁定其肯定含义；跳过 L2",
+            )
+        # 否定的动作不是待执行事项；整段否定子句不参与关键词优先级和排除词。
+        negated = _NEGATED_ACTION_PATTERN.search(original) is not None
+        text = _affirmative_text(original) if negated else original
+        if negated and not text.strip(" ，。；！？!?;,、并"):
+            return FastMatch(
+                status=MatchStatus.AMBIGUOUS, result=None,
+                reason="L1 仅有明确否定的动作，不把它当作待办理意图；交给 L3",
+            )
         found: dict[IntentCategory, str] = {}
         action_clauses: list[tuple[str, _Rule | None, str]] = []
         greeting = False
@@ -214,7 +254,11 @@ class IntentRuleMatcher:
                 reason="L1 连接词或标点分开的子句含不同动作，至少一项无法由规则归类；跳过 L2",
             )
         if not found:
-            return FastMatch(status=MatchStatus.MISS, result=None, reason="L1 无规则命中")
+            return FastMatch(
+                status=MatchStatus.AMBIGUOUS if negated else MatchStatus.MISS,
+                result=None,
+                reason="L1 否定动作后无肯定规则命中，跳过 L2" if negated else "L1 无规则命中",
+            )
 
         if len({_TARGET_GROUP[category] for category in found}) >= 2:
             return FastMatch(
@@ -234,7 +278,10 @@ class IntentRuleMatcher:
         if hit is None:
             return FastMatch(status=MatchStatus.MISS, result=None, reason="L1 全句排除词使规则弃权")
         rule, phrase = hit
-        reason = f"L1 规则命中 {rule.category.value}，匹配片段「{phrase}」"
+        reason = (
+            ("L1 排除否定动作后，" if negated else "L1 ")
+            + f"规则命中 {rule.category.value}，匹配片段「{phrase}」"
+        )
         item = IntentItem(
             intent=rule.category,
             confidence=ConfidenceLevel.HIGH,

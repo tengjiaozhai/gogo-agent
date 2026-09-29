@@ -1,13 +1,33 @@
 """017 原句快筛、条件改写和完整识别的单一应用入口。"""
 
 from datetime import date
+import re
 from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .context import RewriteContextBuilder
 from .models import QueryInput, RecognitionDecision, RewriteResult
+from .rules import _affirmative_text
 from .service import IntentRecognizer, QueryRewriter
+
+
+_REFERENCE_WORD = re.compile(r"那边|那里|它|改成|换成")
+_ELLIPTIC_END = re.compile(r"呢[？?。]?$")
+_EXPLICIT_INTENT = re.compile(r"查|搜|订|买|申请|提交|取消|撤回|修改|报销|规划|安排")
+
+
+def _requires_rewrite_before_fast(query: QueryInput) -> bool:
+    """短追问缺少动作或带指代时，不能靠原句向量相似度抢先定类。"""
+    text = _affirmative_text(query.question)
+    return bool(
+        _REFERENCE_WORD.search(text)
+        or (
+            len(text) <= 16
+            and _ELLIPTIC_END.search(text)
+            and not _EXPLICIT_INTENT.search(text)
+        )
+    )
 
 
 class PreparedIntentTurn(BaseModel):
@@ -84,7 +104,29 @@ class IntentPipelineService:
             current_message_id=current_message_id,
             reference_date=reference_date,
         )
-        fast = await self._recognizer.recognize(context.query, fast_only=True)
+        if _requires_rewrite_before_fast(context.query):
+            fast = RecognitionDecision(
+                result=None, hit_layer=None, confidence=None,
+                vector_threshold=None, candidates=[], attempted_layers=[],
+                reason="018 短追问含指代或省略动作，先结合历史改写，避免原句向量误命中",
+            )
+            if not context.history:
+                rewrite = RewriteResult(
+                    related=False, rewritten_question=None,
+                    reason="短追问缺少可指代的上一轮上下文或明确动作",
+                    evidence=[context.query.question],
+                    missing_context=["上一轮讨论的对象或本轮要办理的具体事项"],
+                )
+                return PreparedIntentTurn(
+                    branch="needs_context",
+                    original_question=context.query,
+                    effective_question=None,
+                    fast_decision=fast,
+                    rewrite=rewrite,
+                    decision=None,
+                )
+        else:
+            fast = await self._recognizer.recognize(context.query, fast_only=True)
         if fast.result is not None:
             return PreparedIntentTurn(
                 branch="fast",

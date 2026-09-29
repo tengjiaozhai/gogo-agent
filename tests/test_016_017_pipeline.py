@@ -198,12 +198,13 @@ async def test_missing_context_or_rewrite_failure_never_dispatches():
     )
     assert prepared.branch == "needs_context"
     assert prepared.decision is None and prepared.effective_question is None
-    assert len(missing.calls) == 1
+    assert missing.calls == []  # 无历史的指代短问句直接要求补齐，不浪费模型调用。
 
     failing = ProbeRewriter(fail=True)
+    failure_id = history.save_user_message("failure-017", "user-1", "帮我写一个Python函数")
     with pytest.raises(RuntimeError, match="deliberately failed"):
         await pipeline_for(history, failing, ProbeVector()).prepare(
-            "session-017", "user-1", current_message_id=message_id,
+            "failure-017", "user-1", current_message_id=failure_id,
             reference_date=REFERENCE_DATE,
         )
     assert len(failing.calls) == 1
@@ -426,7 +427,7 @@ def test_http_rewrite_failure_is_visible_and_never_runs_agent(monkeypatch, accep
     try:
         response = TestClient(app).post(
             "/api/chat/failure-017", headers={"Accept": accept},
-            json={"message": "它呢？"},
+            json={"message": "帮我写一个Python函数"},
         )
         assert response.status_code == 503
         assert response.json()["code"] == 503

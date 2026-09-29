@@ -1,0 +1,134 @@
+{
+  "schema_version": 1,
+  "reference_date": "2026-09-28",
+  "cases": [
+    {
+      "id": "negative_booking_clause",
+      "source": "015 实操发现的否定预订误判",
+      "question": "帮我查机票并不要预订",
+      "history": [],
+      "before": "L1 ambiguous，跳过 L2，多走改写和 L3",
+      "expected": {"branch": "fast", "layer": "rule", "intents": ["flight_search"]}
+    },
+    {
+      "id": "negative_booking_inline",
+      "source": "018 否定动作与肯定查询的同句边界",
+      "question": "帮我查机票不要预订这个",
+      "history": [],
+      "before": "L1 booking，误把不要预订当下单",
+      "expected": {"branch": "fast", "layer": "rule", "intents": ["flight_search"]}
+    },
+    {
+      "id": "negative_only",
+      "source": "Java 规则缺少否定预订用例，Python 018 补充",
+      "question": "我不预订机票",
+      "history": [],
+      "before": "L1 booking，误把否定约束当待执行动作",
+      "expected": {"branch": "rewritten", "layer": "llm", "intents": ["unknown"]}
+    },
+    {
+      "id": "negative_then_train",
+      "source": "018 否定机票动作不得抢占后续火车查询",
+      "question": "不要订机票，只查火车",
+      "history": [],
+      "before": "L1 flight_search，误读已否定的机票",
+      "expected": {"branch": "fast", "layer": "rule", "intents": ["train_search"]}
+    },
+    {
+      "id": "negative_then_flight_without_punctuation",
+      "source": "018 否定动作后用‘但’接肯定查询的顺序边界",
+      "question": "不预订但查机票",
+      "history": [],
+      "before": "否定子句剔除时连‘但查机票’一起删除，L1 ambiguous",
+      "expected": {"branch": "fast", "layer": "rule", "intents": ["flight_search"]}
+    },
+    {
+      "id": "positive_booking",
+      "source": "Java IntentRuleMatcherTest 正向预订边界",
+      "question": "帮我预订这个航班",
+      "history": [],
+      "before": "L1 booking，原本正确",
+      "expected": {"branch": "fast", "layer": "rule", "intents": ["booking"]}
+    },
+    {
+      "id": "not_only_flight",
+      "source": "018 否定词识别不能误吞‘不只是’肯定查询",
+      "question": "不只是查机票，还要酒店",
+      "history": [],
+      "before": "018 初版的宽泛否定匹配误归 hotel_search",
+      "expected": {"branch": "fast", "layer": "rule", "intents": ["flight_search"]}
+    },
+    {
+      "id": "contextual_shanghai",
+      "source": "010-011 历史追问及 017 真实 L2 误命中",
+      "question": "明天去上海呢？",
+      "history": [
+        {"role": "user", "content": "请规划2026年10月8日从北京去杭州的两天行程，包括交通和酒店。"},
+        {"role": "agent", "content": "教学摘要：北京到杭州，两天行程，尚未订票。"}
+      ],
+      "before": "原句 L2 flight_search 约 0.763，跳过历史改写",
+      "expected": {
+        "branch": "rewritten", "layer": "rule", "intents": ["itinerary_planning"],
+        "rewrite_contains": ["北京", "上海", "2026年9月29日", "两天", "规划"],
+        "rewrite_excludes": ["杭州", "2026年10月8日"]
+      }
+    },
+    {
+      "id": "contextual_without_history",
+      "source": "008 缺指代上下文的改写契约",
+      "question": "明天去上海呢？",
+      "history": [],
+      "before": "原句 L2 flight_search，未请求补上下文",
+      "expected": {"branch": "needs_context", "layer": null, "intents": []}
+    },
+    {
+      "id": "explicit_flight_with_history",
+      "source": "018 短追问守卫的正确输入反例",
+      "question": "明天去上海有航班吗？",
+      "history": [
+        {"role": "user", "content": "请规划2026年10月8日从北京去杭州的两天行程，包括交通和酒店。"}
+      ],
+      "before": "L1 flight_search，原本正确",
+      "expected": {"branch": "fast", "layer": "rule", "intents": ["flight_search"]}
+    },
+    {
+      "id": "sanya_new_trip",
+      "source": "Java 018 原文：改写不得把处理出差变成安排行程",
+      "question": "我本周五到周日，去三亚参加海天盛筵",
+      "history": [
+        {"role": "user", "content": "帮我处理这次出差。"},
+        {"role": "agent", "content": "请补充出差时间、目的地和事由；目前尚未发起申请。"}
+      ],
+      "before": "改写只保留本轮要素，L3 itinerary_planning",
+      "expected": {
+        "branch": "rewritten", "layer": "llm", "intents": ["travel_application"],
+        "rewrite_contains": ["处理这次出差", "三亚", "海天盛筵"],
+        "rewrite_excludes": ["规划行程", "安排出差行程", "出差安排"]
+      }
+    },
+    {
+      "id": "out_of_domain_code",
+      "source": "018 真实模型曾将编程请求误归 general_info",
+      "question": "帮我写一个Python快速排序函数",
+      "history": [],
+      "before": "L3 general_info，误把域外编程请求当出行公共信息",
+      "expected": {"branch": "rewritten", "layer": "llm", "intents": ["unknown"]}
+    },
+    {
+      "id": "approval_vector_seed",
+      "source": "014 Qdrant 种子及 L2 正确命中",
+      "question": "我交上去那个流程现在走到哪一步了",
+      "history": [],
+      "before": "L2 approval_query，原本正确",
+      "expected": {"branch": "fast", "layer": "vector", "intents": ["approval_query"]}
+    },
+    {
+      "id": "compound_query_and_plan",
+      "source": "015/017 有序多意图正例",
+      "question": "查订单并规划下一程",
+      "history": [],
+      "before": "L3 travel_order_query → itinerary_planning，原本正确",
+      "expected": {"branch": "rewritten", "layer": "llm", "intents": ["travel_order_query", "itinerary_planning"]}
+    }
+  ]
+}

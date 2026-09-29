@@ -54,11 +54,11 @@
 - [`src/gogo_agent/intent/models.py`](src/gogo_agent/intent/models.py) — 定义改写、意图及三层识别结果的 Pydantic 契约和跨字段校验。
 - [`src/gogo_agent/intent/context.py`](src/gogo_agent/intent/context.py) — 构造经会话归属校验和长度裁剪的最近历史与当前问题快照。
 - [`src/gogo_agent/intent/execution.py`](src/gogo_agent/intent/execution.py) — 按识别事项顺序委派可注入子 Agent，聚合部分失败并模拟同请求写调用去重。
-- [`src/gogo_agent/intent/pipeline.py`](src/gogo_agent/intent/pipeline.py) — 统一原句快速识别、条件改写和完整识别，返回可观察的分支结果。
-- [`src/gogo_agent/intent/rules.py`](src/gogo_agent/intent/rules.py) — 执行 L0/L1 优先级规则及跨职责、未归类多动作子句的弃权判断。
+- [`src/gogo_agent/intent/pipeline.py`](src/gogo_agent/intent/pipeline.py) — 统一快筛、短追问指代守卫、条件改写和完整识别，返回可观察分支。
+- [`src/gogo_agent/intent/rules.py`](src/gogo_agent/intent/rules.py) — 执行 L0/L1 优先级规则、复合弃权及明确否定动作的排除。
 - [`src/gogo_agent/intent/runtime.py`](src/gogo_agent/intent/runtime.py) — 从共用环境配置装配聊天模型、embedding、Qdrant 与一次请求的识别流水线。
 - [`src/gogo_agent/intent/seed.json`](src/gogo_agent/intent/seed.json) — 保存从 Java YAML 移植的 16 类 68 条运行时意图种子。
-- [`src/gogo_agent/intent/service.py`](src/gogo_agent/intent/service.py) — 配置单次文本模型调用，并按规则、向量、LLM 顺序完成可替换的意图识别和严格输出解析。
+- [`src/gogo_agent/intent/service.py`](src/gogo_agent/intent/service.py) — 执行单次模型改写与 L3 分类，验证动作保真并编排规则、向量和 LLM 短路。
 - [`src/gogo_agent/intent/vector.py`](src/gogo_agent/intent/vector.py) — 校验意图种子、构建版本化 Qdrant 索引并执行 L2 Top-2 阈值匹配。
 
 ## docs
@@ -76,6 +76,8 @@
 - [`docs/契约样例/014-意图向量索引.md`](docs/契约样例/014-意图向量索引.md) — 记录 Qdrant 构建方法、Java 阈值基线与真实 Top-2 结果。
 - [`docs/契约样例/015-多意图快速层弃权.md`](docs/契约样例/015-多意图快速层弃权.md) — 记录 L1/L2 多意图弃权、Java 基线盲区及真实模型对照。
 - [`docs/契约样例/016-017-执行与流水线.md`](docs/契约样例/016-017-执行与流水线.md) — 说明 HTTP 识别流水线、假 Master 顺序执行、断点 demo 与运行边界。
+- [`docs/契约样例/018-意图回归语料.json`](docs/契约样例/018-意图回归语料.json) — 保存误路由与正确样例的固定历史、期望改写和命中层。
+- [`docs/契约样例/018-意图误路由修复.md`](docs/契约样例/018-意图误路由修复.md) — 记录否定动作、短追问和三亚出差等修复前后差异与验收。
 
 ## docs/架构
 
@@ -114,6 +116,7 @@
 - [`scripts/demo_010_011_real_model.py`](scripts/demo_010_011_real_model.py) — 使用项目网关和内存历史演示三轮真实改写、意图识别与语义检查。
 - [`scripts/build_intent_index.py`](scripts/build_intent_index.py) — 从统一运行配置构建或复用版本化意图索引并输出固定句探针。
 - [`scripts/demo_016_017_pipeline.py`](scripts/demo_016_017_pipeline.py) — 用真实规则、Qdrant、模型和内存假子 Agent 演示四层分支与顺序执行。
+- [`scripts/evaluate_018_intents.py`](scripts/evaluate_018_intents.py) — 用真实模型和 Qdrant 逐条评估 018 固定语料并打印预期差异。
 
 ## tests
 
@@ -129,5 +132,6 @@
 - [`tests/test_014_vector.py`](tests/test_014_vector.py) — 验证意图种子、真实 Qdrant SDK 幂等索引与 Java Top-2 阈值分差基线。
 - [`tests/test_015_multi_intent.py`](tests/test_015_multi_intent.py) — 验证复合句跳过 L2、L3 有序双意图输出和纯单意图快速路径。
 - [`tests/test_016_017_pipeline.py`](tests/test_016_017_pipeline.py) — 验证条件改写、假子 Agent 顺序和去重、HTTP JSON/SSE 与失败出口。
+- [`tests/test_018_intent_regression.py`](tests/test_018_intent_regression.py) — 验证否定规则、上下文短追问守卫和改写动作保真。
 - [`tests/test_mariadb_integration.py`](tests/test_mariadb_integration.py) — 验证真实 MariaDB 数据库连接、用户密码迁移、会话消息与 agentscope_session 存取。
 - [`tests/test_redis_integration.py`](tests/test_redis_integration.py) — 验证真实 172.22.22.123 Redis 连接、30 天 TTL、跨实例 Token 持久化与平滑降级。
