@@ -50,8 +50,8 @@ def create_executor(monkeypatch, *, case, history):
     built = []
     original_build = executor._build_agent
 
-    def record_coordinator(state, prepared, stream=False):
-        agent = original_build(state, prepared, stream=stream)
+    def record_coordinator(state, prepared, request, tool_calls, stream=False):
+        agent = original_build(state, prepared, request, tool_calls, stream=stream)
         built.append((agent, prepared))
         return agent
 

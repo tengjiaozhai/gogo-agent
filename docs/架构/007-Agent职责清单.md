@@ -104,14 +104,14 @@
 
 `ReimbursementAgent.build()` 直接返回 `null`（`agent/ReimbursementAgent.java:19-23`）。原文和 Master 提示词存在报销条目，实际 Master 没有 `reimbursement_agent` 工具。它没有可交付的输入/输出/工具/状态/失败处理契约，标记为**未实现**，不创建 Python 调度项。
 
-## 4. Python 当前状态与 007 验收
+## 4. Python 状态与 007 验收
 
 Python 目前有两个独立的 `GoGo` 构造位置，职责不同：
 
-- [chat/executor.py](../../src/gogo_agent/chat/executor.py) 的 HTTP 对话 Agent 读取/保存 005 的 AgentState，未注册业务工具或子 Agent。
+- [chat/executor.py](../../src/gogo_agent/chat/executor.py) 的 HTTP 对话 Agent 读取/保存 005 的 AgentState；023 已在 `general_info` 轮次注册只读 `info_agent` 工具，调用独立的 `InfoAgent`。
 - [cli.py](../../src/gogo_agent/cli.py) 的 001 练习 Agent 只注册本地日期工具；它不是 HTTP 的主协调 Agent，也不是 InfoAgent。
 
-当前 Python 没有 Master/子 Agent 权威调度表。本清单记录迁移对象，不把 Java 名称或未实现的占位变成可路由能力。后续普通业务子 Agent 候选严格对应四项真实注册；Info 作为第一个只读目标，Manage 的申请写入、Plan 的方案生成及 Booking 的真实下单按后续阶段实施后再启用。Review 保持审核职责的工具入口，报销继续未实现。
+当前 Python 只装配 Info 只读角色，还没有完整的四角色调度表。本清单记录其余迁移对象，不把 Java 名称或未实现的占位变成可路由能力。Manage 的申请写入、Plan 的方案生成及 Booking 的真实下单按后续阶段实施后再启用。Review 保持审核职责的工具入口，报销继续未实现。
 
 007 的静态验收项：
 
@@ -119,6 +119,6 @@ Python 目前有两个独立的 `GoGo` 构造位置，职责不同：
 - [x] 四个 Master 工具名逐一对应 Bean/实例名称；每个常规 Agent 具备五栏说明。
 - [x] 改写、识别、标题、推荐与 ReAct 业务 Agent 分开列出。
 - [x] Info 被标为首个只读业务迁移目标；差旅申请、方案产物、供应商订单的副作用已区分。
-- [x] Python 当前两个构造入口均无未实现的业务角色注册；本次没有添加占位调度。
+- [x] 007 盘点时两个构造入口均无未实现的业务角色注册；023 后只加入了已验收的 Info 只读调用，没有添加其余占位调度。
 
 本文的“已完成”指 007 职责盘点；模型选路、外部工具成功率、真实下单和多实例恢复均未运行验证。

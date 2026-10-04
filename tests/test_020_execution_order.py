@@ -113,10 +113,10 @@ def recorded_executor(monkeypatch, events, *, active_continuation=None):
     monkeypatch.setattr(executor, "_build_model", lambda stream=False: _FallbackMockModel(stream=stream))
     original_build = executor._build_agent
 
-    def build_agent(state, prepared, stream=False):
+    def build_agent(state, prepared, request, tool_calls, stream=False):
         events.append("coordinator_built")
         loaded_context_sizes.append(len(state.context))
-        agent = original_build(state, prepared, stream=stream)
+        agent = original_build(state, prepared, request, tool_calls, stream=stream)
         original_reply = agent.reply
 
         async def reply(*args, **kwargs):

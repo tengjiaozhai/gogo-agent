@@ -19,7 +19,7 @@
 - [`src/gogo_agent/cli.py`](src/gogo_agent/cli.py) — 装配仅含日期工具的 Agent 并提供终端入口。
 - [`src/gogo_agent/tools.py`](src/gogo_agent/tools.py) — 提供不依赖模型的本地日期工具。
 - [`src/gogo_agent/api.py`](src/gogo_agent/api.py) — 提供后端唯一 FastAPI 应用入口、挂载认证与会话路由、Scalar 交互式 API 文档及健康检查。
-- [`src/gogo_agent/request_context.py`](src/gogo_agent/request_context.py) — 定义服务端创建的不可变请求身份、会话、计划引用和追踪参数。
+- [`src/gogo_agent/request_context.py`](src/gogo_agent/request_context.py) — 定义服务端可信请求参数及只承载日志追踪号的异步任务作用域。
 
 ## src/gogo_agent/auth
 
@@ -38,7 +38,7 @@
 - [`src/gogo_agent/chat/models.py`](src/gogo_agent/chat/models.py) — 定义会话、消息领域模型及请求响应视图 DTO。
 - [`src/gogo_agent/chat/repository.py`](src/gogo_agent/chat/repository.py) — 实现内存与 SQL 的业务历史限量查询、AgentState 保存读取及删除。
 - [`src/gogo_agent/chat/service.py`](src/gogo_agent/chat/service.py) — 编排会话创建、鉴权后的全量或最近历史读取、标题提取及反馈。
-- [`src/gogo_agent/chat/executor.py`](src/gogo_agent/chat/executor.py) — 保存本轮消息后建立可信请求上下文，选择可注入活跃 Agent 续跑或意图流水线，并输出 JSON/SSE。
+- [`src/gogo_agent/chat/executor.py`](src/gogo_agent/chat/executor.py) — 在可信请求和追踪作用域中运行意图流水线、主 Agent 与只读信息子 Agent，并保存 JSON/SSE 回复及工具记录。
 - [`src/gogo_agent/chat/dependencies.py`](src/gogo_agent/chat/dependencies.py) — 提供会话仓储、L2 记忆库与执行器的 FastAPI 依赖注入。
 - [`src/gogo_agent/chat/router.py`](src/gogo_agent/chat/router.py) — 定义 /api/chat 的会话接口，并在 SSE 建立前完成对话预处理。
 
@@ -125,6 +125,8 @@
 - [`scripts/evaluate_018_intents.py`](scripts/evaluate_018_intents.py) — 用真实模型和 Qdrant 逐条评估 018 固定语料并打印预期差异。
 - [`scripts/demo_020_execution_order.py`](scripts/demo_020_execution_order.py) — 用离线模型和内存状态演示新请求顺序、同会话恢复及活跃 Agent 续跑回退。
 - [`scripts/demo_021_request_context.py`](scripts/demo_021_request_context.py) — 用本地 Token、假子 Agent 和假工具演示可信身份传递及多步骤追踪。
+- [`scripts/demo_022_async_context.py`](scripts/demo_022_async_context.py) — 用离线双请求与后台任务演示显式身份传递、追踪隔离和空任务上下文。
+- [`scripts/demo_023_master_agent.py`](scripts/demo_023_master_agent.py) — 用离线 HTTP、固定模型和真实 AgentScope Toolkit 演示主 Agent 委派与未注册工具拒绝。
 
 ## output
 
@@ -148,5 +150,7 @@
 - [`tests/test_019_routing.py`](tests/test_019_routing.py) — 验证 L1/L2/L3 结果均进入 GoGo 协调入口，不因高置信绕过会话归属或提示词。
 - [`tests/test_020_execution_order.py`](tests/test_020_execution_order.py) — 记录新请求与 GoGo 状态恢复顺序，并用假活跃 Agent 验证实际执行器续跑和回退。
 - [`tests/test_021_request_context.py`](tests/test_021_request_context.py) — 用真实登录 Token 和假工具验收伪造用户 ID 隔离及子步骤追踪。
+- [`tests/test_022_async_context.py`](tests/test_022_async_context.py) — 用双用户交错 HTTP、跨任务 SSE 和后台任务验证身份与追踪上下文隔离及清理。
+- [`tests/test_023_master_agent.py`](tests/test_023_master_agent.py) — 验证 HTTP JSON/SSE 中主 Agent 调用只读信息子 Agent 及未注册工具拒绝。
 - [`tests/test_mariadb_integration.py`](tests/test_mariadb_integration.py) — 验证真实 MariaDB 数据库连接、用户密码迁移、会话消息与 agentscope_session 存取。
 - [`tests/test_redis_integration.py`](tests/test_redis_integration.py) — 验证真实 172.22.22.123 Redis 连接、30 天 TTL、跨实例 Token 持久化与平滑降级。

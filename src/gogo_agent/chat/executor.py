@@ -1,5 +1,6 @@
 """对话执行层：集成 AgentScope 2.x Agent 与 L1 业务历史、L2 AgentState 会话记忆持久化。"""
 
+import logging
 import os
 from inspect import isawaitable
 from typing import AsyncContextManager, AsyncGenerator, Callable, Optional
@@ -9,14 +10,16 @@ from agentscope.credential import DeepSeekCredential, OpenAICredential
 from agentscope.event import TextBlockDeltaEvent
 from agentscope.message import TextBlock, UserMsg
 from agentscope.model import ChatResponse, DeepSeekChatModel, OpenAIChatModel
+from agentscope.permission import PermissionBehavior, PermissionDecision
 from agentscope.state import AgentState
+from agentscope.tool import FunctionTool, Toolkit
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from gogo_agent.intent.models import QueryInput
+from gogo_agent.intent.models import IntentCategory, QueryInput
 from gogo_agent.intent.pipeline import IntentPipelineService, PreparedIntentTurn
 from gogo_agent.intent.runtime import load_intent_runtime_settings, open_intent_pipeline
-from gogo_agent.request_context import RequestContext
+from gogo_agent.request_context import RequestContext, current_trace_id, trace_scope
 
 from .continuation import ActiveAgentContinuation, TurnEntry, choose_turn_entry
 from .repository import (
@@ -24,6 +27,8 @@ from .repository import (
     create_agent_session_store,
 )
 from .service import ChatHistoryService
+
+logger = logging.getLogger(__name__)
 
 
 class _FallbackMockModel(OpenAIChatModel):
@@ -75,10 +80,12 @@ class _FallbackMockModel(OpenAIChatModel):
 
 
 class ChatAgentExecutor:
-    """协调消息持久化、AgentState 生命周期及 AgentScope 智能体执行。"""
+    """协调消息、AgentState 和主 Agent 的只读信息子 Agent 调用。"""
 
-    # 019：真实 Master/子 Agent 尚待 023；当前所有识别结果统一进入这个协调入口。
+    # 019：所有识别结果仍进入同一个协调入口，高置信不直跳子 Agent。
     COORDINATOR_AGENT_NAME = "GoGo"
+    INFO_AGENT_NAME = "InfoAgent"
+    INFO_TOOL_NAME = "info_agent"
 
     def __init__(
         self,
@@ -138,13 +145,67 @@ class ChatAgentExecutor:
             if isawaitable(closed):
                 await closed
 
-    def _build_agent(self, state: AgentState, prepared: PreparedIntentTurn, stream: bool = False) -> Agent:
-        """用已识别的有序类别提示当前单 Agent，不能把分类当作执行授权。"""
+    def _build_info_agent(self, request: RequestContext) -> Agent:
+        """每次调用创建无业务工具的只读子 Agent，不保存独立会话状态。"""
+        return Agent(
+            name=self.INFO_AGENT_NAME,
+            system_prompt=(
+                "你是 GoGo 的只读信息查询子智能体。仅回答普通公共信息问题。"
+                "当前未接入差旅政策、实时天气、签证或订单数据；缺少依据时明确说明。"
+                "不要声称已查询或修改用户账户、差旅单、预订和审批。"
+            ),
+            model=self._build_model(stream=False),
+            state=AgentState(session_id=self._state_session_id(request.session_id, request.user_id)),
+        )
+
+    def _build_agent(
+        self,
+        state: AgentState,
+        prepared: PreparedIntentTurn,
+        request: RequestContext,
+        tool_calls: list[dict[str, str]],
+        stream: bool = False,
+    ) -> Agent:
+        """用识别结果决定本轮可见工具；身份仍从可信请求参数传入。"""
         try:
             model = self._build_model(stream=stream)
         except TypeError:
             model = self._build_model()
         intents = "、".join(item.intent.value for item in prepared.decision.result.intents)
+        toolkit = None
+        tool_instruction = "本轮没有可调用的业务子智能体；无法办理的事项请直接说明。"
+        if any(item.intent == IntentCategory.GENERAL_INFO for item in prepared.decision.result.intents):
+            async def ask_info_agent(question: str) -> str:
+                """委派普通公共信息问题给只读 InfoAgent，再返回其回答。"""
+                child: Agent | None = None
+                status = "failed"
+                try:
+                    child = self._build_info_agent(request)
+                    reply = await child.reply(UserMsg(name=self.COORDINATOR_AGENT_NAME, content=question))
+                    answer = reply.get_text_content() or ""
+                    if not answer.strip():
+                        raise ValueError("信息子 Agent 没有返回可用回答")
+                    status = "completed"
+                    return answer
+                finally:
+                    tool_calls.append({
+                        "tool_name": self.INFO_TOOL_NAME,
+                        "agent_name": self.INFO_AGENT_NAME,
+                        "status": status,
+                        "trace_id": request.trace_id,
+                    })
+                    await self._close_agent_model(child)
+
+            toolkit = Toolkit(tools=[FunctionTool(
+                ask_info_agent,
+                name=self.INFO_TOOL_NAME,
+                is_read_only=True,
+                permission=PermissionDecision(
+                    behavior=PermissionBehavior.ALLOW,
+                    message="允许只读公共信息查询",
+                ),
+            )])
+            tool_instruction = "普通公共信息问题请调用 info_agent，再根据其结果回答。"
         return Agent(
             name=self.COORDINATOR_AGENT_NAME,
             system_prompt=(
@@ -152,9 +213,11 @@ class ChatAgentExecutor:
                 "行程规划、差旅政策咨询与预订服务。请保持专业、简洁和友善。"
                 f"本轮识别的诉求顺序为：{intents}。按顺序回应，不丢失前项结果。"
                 "识别结果只是理解线索，不是身份、审批或下单授权。"
+                f"{tool_instruction}"
                 "目前没有业务写入工具，不得声称已经提交申请、保存方案或完成预订。"
             ),
             model=model,
+            toolkit=toolkit,
             state=state,
         )
 
@@ -208,16 +271,21 @@ class ChatAgentExecutor:
         """消息已保存时执行 017；模型或索引故障不能继续触发 Agent。"""
         try:
             async with self._pipeline_factory(self._history_service) as pipeline:
-                return await pipeline.prepare(request)
+                prepared = await pipeline.prepare(request)
+                logger.info("chat intent prepared", extra={"trace_id": current_trace_id()})
+                return prepared
         except HTTPException:
             raise
         except Exception as exc:
             raise HTTPException(503, f"意图处理失败（{type(exc).__name__}）") from None
 
-    def _pipeline_extra(self, prepared: PreparedIntentTurn, request: RequestContext) -> dict:
+    def _pipeline_extra(
+        self, prepared: PreparedIntentTurn, request: RequestContext,
+        tool_calls: list[dict[str, str]] | None = None,
+    ) -> dict:
         """保存可调试层级与分支，不保存密钥、原始模型响应或可信身份。"""
         decision = prepared.decision
-        return {"intent_pipeline": {
+        extra = {"intent_pipeline": {
             "request_id": request.request_id,
             "trace_id": request.trace_id,
             "dispatch_target": self.COORDINATOR_AGENT_NAME if decision is not None else None,
@@ -227,6 +295,9 @@ class ChatAgentExecutor:
             "hit_layer": decision.hit_layer.value if decision and decision.hit_layer else None,
             "intents": [item.intent.value for item in decision.result.intents] if decision and decision.result else [],
         }}
+        if tool_calls is not None:
+            extra["tool_calls"] = tool_calls
+        return extra
 
     @staticmethod
     def _clarification(prepared: PreparedIntentTurn) -> str:
@@ -249,52 +320,58 @@ class ChatAgentExecutor:
         """
         # 步骤 1：在 L1 保存原问题并完成 017 预处理；失败时不运行 Agent。
         request = self._save_user_turn(session_id, user_id, message)
-        active_name = self._active_agent_for_turn(request, message)
-        if active_name is not None:
-            return await self._continue_active_turn(request, active_name, message)
-        prepared = await self._prepare_turn(request)
-        if prepared.branch == "needs_context":
-            text = self._clarification(prepared)
+        with trace_scope(request):
+            logger.info("chat turn started", extra={"trace_id": current_trace_id()})
+            active_name = self._active_agent_for_turn(request, message)
+            if active_name is not None:
+                return await self._continue_active_turn(request, active_name, message)
+            prepared = await self._prepare_turn(request)
+            if prepared.branch == "needs_context":
+                text = self._clarification(prepared)
+                msg_id = self._history_service.save_assistant_message(
+                    conversation_id=request.session_id, user_id=request.user_id, content=text,
+                    agent_name=self.COORDINATOR_AGENT_NAME, extra=self._pipeline_extra(prepared, request),
+                )
+                return text, msg_id
+
+            # 步骤 2：在 L2 读取历史 AgentState（若为新会话则初始化全新状态）
+            state_session_id = self._state_session_id(request.session_id, request.user_id)
+            agent: Agent | None = None
+            tool_calls: list[dict[str, str]] = []
+            try:
+                agent_state = self._session_store.load_agent_state(
+                    state_session_id, agent_name=self.COORDINATOR_AGENT_NAME,
+                )
+                if agent_state is None:
+                    agent_state = AgentState(session_id=request.session_id)
+
+                # 步骤 3：运行 AgentScope Agent 执行推理
+                agent = self._build_agent(
+                    state=agent_state, prepared=prepared, request=request,
+                    tool_calls=tool_calls, stream=False,
+                )
+                reply_msg = await agent.reply(UserMsg(name="user", content=prepared.effective_question.question))
+            except Exception as exc:
+                raise HTTPException(503, f"对话生成失败（{type(exc).__name__}）") from None
+            finally:
+                await self._close_agent_model(agent)
+            reply_text = reply_msg.get_text_content() or ""
+
+            # 先保存业务可见回复；失败时不得写入一份看不到的 AgentState。
             msg_id = self._history_service.save_assistant_message(
-                conversation_id=request.session_id, user_id=request.user_id, content=text,
-                agent_name=self.COORDINATOR_AGENT_NAME, extra=self._pipeline_extra(prepared, request),
+                conversation_id=request.session_id,
+                user_id=request.user_id,
+                content=reply_text,
+                agent_name=self.COORDINATOR_AGENT_NAME,
+                extra=self._pipeline_extra(prepared, request, tool_calls),
             )
-            return text, msg_id
 
-        # 步骤 2：在 L2 读取历史 AgentState（若为新会话则初始化全新状态）
-        state_session_id = self._state_session_id(request.session_id, request.user_id)
-        agent: Agent | None = None
-        try:
-            agent_state = self._session_store.load_agent_state(
-                state_session_id, agent_name=self.COORDINATOR_AGENT_NAME,
+            # 再保存 AgentState；此处失败仍可能留下已保存的业务回复。
+            self._session_store.save_agent_state(
+                state_session_id, agent.state, agent_name=self.COORDINATOR_AGENT_NAME,
             )
-            if agent_state is None:
-                agent_state = AgentState(session_id=request.session_id)
 
-            # 步骤 3：运行 AgentScope Agent 执行推理
-            agent = self._build_agent(state=agent_state, prepared=prepared, stream=False)
-            reply_msg = await agent.reply(UserMsg(name="user", content=prepared.effective_question.question))
-        except Exception as exc:
-            raise HTTPException(503, f"对话生成失败（{type(exc).__name__}）") from None
-        finally:
-            await self._close_agent_model(agent)
-        reply_text = reply_msg.get_text_content() or ""
-
-        # 先保存业务可见回复；失败时不得写入一份看不到的 AgentState。
-        msg_id = self._history_service.save_assistant_message(
-            conversation_id=request.session_id,
-            user_id=request.user_id,
-            content=reply_text,
-            agent_name=self.COORDINATOR_AGENT_NAME,
-            extra=self._pipeline_extra(prepared, request),
-        )
-
-        # 再保存 AgentState；此处失败仍可能留下已保存的业务回复。
-        self._session_store.save_agent_state(
-            state_session_id, agent.state, agent_name=self.COORDINATOR_AGENT_NAME,
-        )
-
-        return reply_text, msg_id
+            return reply_text, msg_id
 
     async def stream_turn_sse(
         self,
@@ -312,44 +389,65 @@ class ChatAgentExecutor:
         6. SSE 完成：推送 event: message_id 通知前端接收完毕。
         """
         request = self._save_user_turn(session_id, user_id, message)
-        active_name = self._active_agent_for_turn(request, message)
-        if active_name is not None:
-            text, msg_id = await self._continue_active_turn(
-                request, active_name, message,
-            )
+        with trace_scope(request):
+            logger.info("chat stream prepared", extra={"trace_id": current_trace_id()})
+            active_name = self._active_agent_for_turn(request, message)
+            if active_name is not None:
+                text, msg_id = await self._continue_active_turn(
+                    request, active_name, message,
+                )
 
-            async def continuation_events() -> AsyncGenerator[str, None]:
-                data_lines = "\n".join(f"data: {line}" for line in text.split("\n"))
-                yield f"event: message\n{data_lines}\n\n"
-                yield f"event: message_id\ndata: {msg_id}\n\n"
+                async def continuation_events() -> AsyncGenerator[str, None]:
+                    data_lines = "\n".join(f"data: {line}" for line in text.split("\n"))
+                    yield f"event: message\n{data_lines}\n\n"
+                    yield f"event: message_id\ndata: {msg_id}\n\n"
 
-            return continuation_events()
-        prepared = await self._prepare_turn(request)
-        if prepared.branch == "needs_context":
-            text = self._clarification(prepared)
-            msg_id = self._history_service.save_assistant_message(
-                conversation_id=request.session_id, user_id=request.user_id, content=text,
-                agent_name=self.COORDINATOR_AGENT_NAME, extra=self._pipeline_extra(prepared, request),
-            )
+                return self._traced_stream(request, continuation_events())
+            prepared = await self._prepare_turn(request)
+            if prepared.branch == "needs_context":
+                text = self._clarification(prepared)
+                msg_id = self._history_service.save_assistant_message(
+                    conversation_id=request.session_id, user_id=request.user_id, content=text,
+                    agent_name=self.COORDINATOR_AGENT_NAME, extra=self._pipeline_extra(prepared, request),
+                )
 
-            async def clarification_events() -> AsyncGenerator[str, None]:
-                lines = text.split("\n")
-                data_lines = "\n".join(f"data: {line}" for line in lines)
-                yield f"event: message\n{data_lines}\n\n"
-                yield f"event: message_id\ndata: {msg_id}\n\n"
+                async def clarification_events() -> AsyncGenerator[str, None]:
+                    lines = text.split("\n")
+                    data_lines = "\n".join(f"data: {line}" for line in lines)
+                    yield f"event: message\n{data_lines}\n\n"
+                    yield f"event: message_id\ndata: {msg_id}\n\n"
 
-            return clarification_events()
-        return self._stream_prepared_turn(request, prepared)
+                return self._traced_stream(request, clarification_events())
+            return self._traced_stream(request, self._stream_prepared_turn(request, prepared))
+
+    @staticmethod
+    async def _traced_stream(
+        request: RequestContext, events: AsyncGenerator[str, None],
+    ) -> AsyncGenerator[str, None]:
+        """每次推进 SSE 生成器时绑定追踪号，交出事件前恢复消费任务的上下文。"""
+        try:
+            while True:
+                with trace_scope(request):
+                    try:
+                        event = await anext(events)
+                    except StopAsyncIteration:
+                        return
+                yield event
+        finally:
+            with trace_scope(request):
+                await events.aclose()
 
     async def _stream_prepared_turn(
         self, request: RequestContext, prepared: PreparedIntentTurn,
     ) -> AsyncGenerator[str, None]:
         """只在预处理成功后执行 Agent，保留 005 的 message/message_id 事件。"""
+        logger.info("chat stream started", extra={"trace_id": current_trace_id()})
 
         # 步骤 2：在 L2 读取历史 AgentState（若为新会话则初始化全新状态）
         state_session_id = self._state_session_id(request.session_id, request.user_id)
         accumulated_chunks: list[str] = []
         agent: Agent | None = None
+        tool_calls: list[dict[str, str]] = []
 
         try:
             agent_state = self._session_store.load_agent_state(
@@ -359,7 +457,10 @@ class ChatAgentExecutor:
                 agent_state = AgentState(session_id=request.session_id)
 
             # 步骤 3：流式运行 AgentScope Agent 并逐块产出
-            agent = self._build_agent(state=agent_state, prepared=prepared, stream=True)
+            agent = self._build_agent(
+                state=agent_state, prepared=prepared, request=request,
+                tool_calls=tool_calls, stream=True,
+            )
             async for event in agent.reply_stream(
                 UserMsg(name="user", content=prepared.effective_question.question),
                 yield_final_msg=True,
@@ -394,7 +495,7 @@ class ChatAgentExecutor:
                 user_id=request.user_id,
                 content=full_reply_text,
                 agent_name=self.COORDINATOR_AGENT_NAME,
-                extra=self._pipeline_extra(prepared, request),
+                extra=self._pipeline_extra(prepared, request, tool_calls),
             )
 
             # 再保存 AgentState；若失败，SSE 不报完成。

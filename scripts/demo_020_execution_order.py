@@ -131,10 +131,10 @@ class OfflineExecutor(ChatAgentExecutor):
     def _build_model(self, stream=False):
         return _FallbackMockModel(stream=stream)
 
-    def _build_agent(self, state, prepared, stream=False):
+    def _build_agent(self, state, prepared, request, tool_calls, stream=False):
         self.events.append("coordinator_built")
         self.events.append(f"state_context_messages={len(state.context)}")
-        agent = super()._build_agent(state, prepared, stream=stream)
+        agent = super()._build_agent(state, prepared, request, tool_calls, stream=stream)
         reply = agent.reply
 
         async def record_reply(*args, **kwargs):
@@ -226,7 +226,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="离线调试 020 的执行顺序与活跃 Agent 续跑")
     parser.add_argument("--case", choices=("all", "new", "same", "continue", "fallback"), default="all")
     args = parser.parse_args()
-    print("只用内存仓储与固定模型；真实业务子 Agent 仍待 023/027。")
+    print("只用内存仓储与固定模型；此脚本演示 020 顺序，023 只读信息子 Agent 与 027 活跃 Agent 续跑另行验收。")
     asyncio.run(run(args.case))
 
 

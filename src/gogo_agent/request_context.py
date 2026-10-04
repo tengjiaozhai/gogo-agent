@@ -1,5 +1,8 @@
-"""021 服务端可信请求上下文；身份和状态引用不从模型消息解析。"""
+"""服务端可信请求参数与日志追踪作用域；身份不从模型消息解析。"""
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Annotated
 from uuid import uuid4
 
@@ -7,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 
 _NonEmptyId = Annotated[str, StringConstraints(strict=True, min_length=1)]
+_trace_id: ContextVar[str | None] = ContextVar("gogo_trace_id", default=None)
 
 
 class RequestContext(BaseModel):
@@ -25,3 +29,18 @@ class RequestContext(BaseModel):
         default=None,
         description="服务端验证后传递的计划引用；尚无计划时为空，不采信模型自报值",
     )
+
+
+def current_trace_id() -> str | None:
+    """只供日志读取当前异步任务的追踪号，不提供身份或授权数据。"""
+    return _trace_id.get()
+
+
+@contextmanager
+def trace_scope(request: RequestContext) -> Iterator[None]:
+    """在请求执行期间绑定追踪号，退出、异常和取消时恢复原值。"""
+    token = _trace_id.set(request.trace_id)
+    try:
+        yield
+    finally:
+        _trace_id.reset(token)
