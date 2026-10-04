@@ -1,5 +1,6 @@
 """Authoritative HTTP entry for the GoGo Agent backend."""
 
+from contextlib import asynccontextmanager
 from importlib.metadata import version
 
 from fastapi import FastAPI, HTTPException, Request
@@ -7,9 +8,19 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from scalar_fastapi import add_scalar_reference
 
 from gogo_agent.auth.router import router as auth_router
+from gogo_agent.chat.config import load_chat_agent_settings, require_model_configuration
 from gogo_agent.chat.router import router as chat_router
 
-app = FastAPI(title="GoGo Agent")
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    """正式 API 启动前验证模型与 Agent 参数，不连接外部模型。"""
+    require_model_configuration()
+    load_chat_agent_settings()
+    yield
+
+
+app = FastAPI(title="GoGo Agent", lifespan=lifespan)
 
 app.include_router(auth_router)
 app.include_router(chat_router)
@@ -45,4 +56,3 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run("gogo_agent.api:app", host="127.0.0.1", port=8000, reload=True)
-

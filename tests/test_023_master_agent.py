@@ -237,9 +237,10 @@ async def test_unregistered_tool_is_rejected_before_child_execution(master_http_
 
 
 @pytest.mark.asyncio
-async def test_non_info_intent_has_no_info_tool(master_http_case):
+async def test_non_info_intent_has_no_info_tool(master_http_case, monkeypatch):
     """其他业务意图仍进入 GoGo，但不会获得信息子 Agent 工具。"""
     _, _, executor = master_http_case
+    monkeypatch.setattr(executor, "_build_model", lambda stream=False: _FallbackMockModel(stream=stream))
     request = executor._save_user_turn("session-023-policy", "u001", "查询差旅政策")
     prepared = await executor._prepare_turn(request)
     policy = IntentResult(

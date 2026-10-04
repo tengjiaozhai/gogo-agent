@@ -4,7 +4,7 @@
 
 ## 选择的 HTTP 入口
 
-**唯一入口是 `gogo_agent.api:app`（FastAPI）。** 目前只注册 `GET /health`，可用 `uv run --locked uvicorn gogo_agent.api:app --host 127.0.0.1 --port 8000` 启动。终端练习 `gogo-agent` 仍单独调用 AgentScope SDK，不是第二个 HTTP 服务。登录、聊天和业务路由按对应编号实现后，再注册到这个应用；003 不创建无鉴权的占位业务接口。
+**唯一入口是 `gogo_agent.api:app`（FastAPI）。** 003 实施时只注册 `GET /health`；后续编号已加入认证与聊天路由。024 起用 `uv run --locked uvicorn gogo_agent.api:app --host 127.0.0.1 --port 8000` 启动正式 API 前，须提供模型网关配置；缺项在启动阶段失败。终端练习 `gogo-agent` 仍单独调用 AgentScope SDK，不是第二个 HTTP 服务。003 没有创建无鉴权的占位业务接口。
 
 | 方案 | 当前前端契约的适配成本 | 身份与存储入口 | 003 结论 |
 | --- | --- | --- | --- |
@@ -43,11 +43,11 @@ flowchart TD
 3. **写入点**：`ChatHistoryService` 写 `chat_conversation`、`chat_message`；`SessionPersistenceHook` 另以 `sessionId:agentName` 保存 Agent 内部状态到 `agentscope_session`；工具可写差旅、审批和预订业务表或调用外部服务。两种历史的序列化格式不能直接混读。依据：`business/chat/service/ChatHistoryService.java:80-108,199-203`、`agent/hook/SessionPersistenceHook.java:61-103`、`agent/config/TravelAgentConfig.java:73-90`，以及 002 静态契约。
 4. **错误出口**：未登录在 SSE 建立前由异常处理器返回 HTTP 401；请求参数错误为 HTTP 400，未预期同步错误为 HTTP 500。异步 Agent 失败后，Executor 发送脱敏的 SSE `error` 并结束流；正常答复是 `message`，若落库成功才有 `message_id`；挂起可发送 `user_interaction`。用户消息和回复落库异常在 Java 当前路径中被记录后继续执行，存在“流成功但历史缺失”的静态风险。依据：`config/GlobalExceptionHandler.java:37-55,88-107`、`agent/service/ChatAgentExecutor.java:147-170,306-335`、`agent/service/ChatSseNotifier.java:37-89,111-131`。
 
-**Python 目标调用图**（下图除 `api.py` 的健康检查和 001 的 CLI 外均为后续编号计划，尚非已实现路径）：
+**003 阶段的 Python 目标调用图**（当前 004–024 已逐步实现认证、聊天、意图流水线、只读信息子 Agent 和启动校验；图中其余业务工具与前端集成仍为计划）：
 
 ```mermaid
 flowchart TD
-    UI[原 React 前端] --> API[唯一 FastAPI app<br/>api.py 当前只有 health]
+    UI[原 React 前端] --> API[唯一 FastAPI app]
     API --> AUTH[004 token 验证<br/>可信 userId]
     AUTH --> CHAT[005 / 098 聊天与 SSE 接口]
     CHAT --> ORCH[006–023 意图与 AgentScope 编排]
@@ -63,7 +63,7 @@ flowchart TD
 
 ## Java → Python 入口表
 
-**当前 Python 实现只有 `GET /health`。** 表中其余 Python 目标表示迁移位置和阶段，不表示路由已存在；详细字段与状态码见 002 契约。所有 Java 路由与前端调用均为源码静态核对，未启动 Java 服务。
+**003 当时的 Python 实现只有 `GET /health`。** 004/005 以后已有认证和聊天路由，024 为正式 API 加上模型配置启动校验；图中更远的业务目标仍按对应阶段实施。详细字段与状态码见 002 契约。所有 Java 路由与前端调用均为源码静态核对，未启动 Java 服务。
 
 | Java 入口与主要响应 | Java 身份要求 | Python 目标与阶段 |
 | --- | --- | --- |

@@ -10,7 +10,7 @@
 - [`pyproject.toml`](pyproject.toml) — 定义 Python 项目元数据、运行时版本要求及依赖配置。
 - [`uv.lock`](uv.lock) — 固定 001 已解析的 Python 依赖版本以供重复安装。
 - [`README.md`](README.md) — 说明安装、终端 Agent、FastAPI 健康检查和测试命令。
-- [`.env.example`](.env.example) — 列出聊天/embedding 共用网关和意图向量索引所需的环境变量名。
+- [`.env.example`](.env.example) — 列出模型网关、Agent 轮次/超时、意图向量索引及存储连接的环境变量。
 - [`main.py`](main.py) — 根目录便捷入口，供 PyCharm 右键一键运行或调试 API 后台。
 
 ## src/gogo_agent
@@ -18,7 +18,7 @@
 - [`src/gogo_agent/__init__.py`](src/gogo_agent/__init__.py) — 标记 GoGo Agent 的 Python 包。
 - [`src/gogo_agent/cli.py`](src/gogo_agent/cli.py) — 装配仅含日期工具的 Agent 并提供终端入口。
 - [`src/gogo_agent/tools.py`](src/gogo_agent/tools.py) — 提供不依赖模型的本地日期工具。
-- [`src/gogo_agent/api.py`](src/gogo_agent/api.py) — 提供后端唯一 FastAPI 应用入口、挂载认证与会话路由、Scalar 交互式 API 文档及健康检查。
+- [`src/gogo_agent/api.py`](src/gogo_agent/api.py) — 提供唯一 FastAPI 入口、启动配置校验、认证与会话路由及 API 文档和健康检查。
 - [`src/gogo_agent/request_context.py`](src/gogo_agent/request_context.py) — 定义服务端可信请求参数及只承载日志追踪号的异步任务作用域。
 
 ## src/gogo_agent/auth
@@ -34,11 +34,12 @@
 ## src/gogo_agent/chat
 
 - [`src/gogo_agent/chat/__init__.py`](src/gogo_agent/chat/__init__.py) — 导出会话消息服务、执行器与路由入口。
+- [`src/gogo_agent/chat/config.py`](src/gogo_agent/chat/config.py) — 集中主/信息 Agent 提示词、轮次、模型与只读工具超时配置及启动校验。
 - [`src/gogo_agent/chat/continuation.py`](src/gogo_agent/chat/continuation.py) — 定义接收可信请求上下文的活跃 Agent 续跑接口，并判定完整信号或无效记录的入口。
 - [`src/gogo_agent/chat/models.py`](src/gogo_agent/chat/models.py) — 定义会话、消息领域模型及请求响应视图 DTO。
 - [`src/gogo_agent/chat/repository.py`](src/gogo_agent/chat/repository.py) — 实现内存与 SQL 的业务历史限量查询、AgentState 保存读取及删除。
 - [`src/gogo_agent/chat/service.py`](src/gogo_agent/chat/service.py) — 编排会话创建、鉴权后的全量或最近历史读取、标题提取及反馈。
-- [`src/gogo_agent/chat/executor.py`](src/gogo_agent/chat/executor.py) — 在可信请求和追踪作用域中运行意图流水线、主 Agent 与只读信息子 Agent，并保存 JSON/SSE 回复及工具记录。
+- [`src/gogo_agent/chat/executor.py`](src/gogo_agent/chat/executor.py) — 按可信请求和集中配置运行主/信息 Agent，处理 JSON/SSE 成功与失败出口并保存状态和工具记录。
 - [`src/gogo_agent/chat/dependencies.py`](src/gogo_agent/chat/dependencies.py) — 提供会话仓储、L2 记忆库与执行器的 FastAPI 依赖注入。
 - [`src/gogo_agent/chat/router.py`](src/gogo_agent/chat/router.py) — 定义 /api/chat 的会话接口，并在 SSE 建立前完成对话预处理。
 
@@ -83,6 +84,7 @@
 - [`docs/契约样例/019-主协调入口与直跳取舍.md`](docs/契约样例/019-主协调入口与直跳取舍.md) — 记录不启用高置信直跳的依据、当前协调入口验收及后续候选条件。
 - [`docs/契约样例/020-执行顺序与续跑边界.md`](docs/契约样例/020-执行顺序与续跑边界.md) — 对照新请求与活跃 Agent 续跑的序列、标题/历史时点及当前验收边界。
 - [`docs/契约样例/021-请求上下文与信任边界.md`](docs/契约样例/021-请求上下文与信任边界.md) — 区分认证上下文与模型可见业务线索，记录传参、伪造身份及追踪验收。
+- [`docs/契约样例/024-Agent关键配置与失败出口.md`](docs/契约样例/024-Agent关键配置与失败出口.md) — 对照主/信息 Agent 的配置来源、Java 差异、失败出口与运行验收。
 
 ## docs/架构
 
@@ -127,10 +129,12 @@
 - [`scripts/demo_021_request_context.py`](scripts/demo_021_request_context.py) — 用本地 Token、假子 Agent 和假工具演示可信身份传递及多步骤追踪。
 - [`scripts/demo_022_async_context.py`](scripts/demo_022_async_context.py) — 用离线双请求与后台任务演示显式身份传递、追踪隔离和空任务上下文。
 - [`scripts/demo_023_master_agent.py`](scripts/demo_023_master_agent.py) — 用离线 HTTP、固定模型和真实 AgentScope Toolkit 演示主 Agent 委派与未注册工具拒绝。
+- [`scripts/demo_024_agent_config.py`](scripts/demo_024_agent_config.py) — 用离线模型演示启动配置、信息工具超时及主 Agent 轮次耗尽。
 
 ## output
 
 - [`output/l0_l1_intent_routing.html`](output/l0_l1_intent_routing.html) — 提供 L0/L1 意图路由和规则否决条件的独立交互图解。
+- [`output/show_me_023_execution_flow.html`](output/show_me_023_execution_flow.html) — 提供 023 从 HTTP 请求到 MasterModel._call_api 调用链路与 Java 工程化映射图解。
 
 ## tests
 
@@ -152,5 +156,6 @@
 - [`tests/test_021_request_context.py`](tests/test_021_request_context.py) — 用真实登录 Token 和假工具验收伪造用户 ID 隔离及子步骤追踪。
 - [`tests/test_022_async_context.py`](tests/test_022_async_context.py) — 用双用户交错 HTTP、跨任务 SSE 和后台任务验证身份与追踪上下文隔离及清理。
 - [`tests/test_023_master_agent.py`](tests/test_023_master_agent.py) — 验证 HTTP JSON/SSE 中主 Agent 调用只读信息子 Agent 及未注册工具拒绝。
+- [`tests/test_024_agent_config.py`](tests/test_024_agent_config.py) — 验证启动配置、Agent 轮次/超时、模型重试和错误取消出口。
 - [`tests/test_mariadb_integration.py`](tests/test_mariadb_integration.py) — 验证真实 MariaDB 数据库连接、用户密码迁移、会话消息与 agentscope_session 存取。
 - [`tests/test_redis_integration.py`](tests/test_redis_integration.py) — 验证真实 172.22.22.123 Redis 连接、30 天 TTL、跨实例 Token 持久化与平滑降级。

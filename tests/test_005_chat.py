@@ -196,7 +196,7 @@ def test_sse_streaming_response_format(test_users):
     assert "data: msg_" in text
 
 
-def test_multiturn_agent_state_restoration_across_restarts(test_users):
+def test_multiturn_agent_state_restoration_across_restarts(test_users, monkeypatch):
     """验收标准：重启服务（模拟实例销毁后重建）后，AgentState 仍能正确恢复上下文记忆。"""
     session_id = "session_restore_test"
     user_id = "u001"
@@ -208,6 +208,8 @@ def test_multiturn_agent_state_restoration_across_restarts(test_users):
         chat_history_service=history, agent_session_store=store,
         pipeline_factory=test_users["pipeline_factory"],
     )
+    from gogo_agent.chat.executor import _FallbackMockModel
+    monkeypatch.setattr(executor1, "_build_model", lambda stream=False: _FallbackMockModel(stream=stream))
     reply1, msg_id1 = pytest.importorskip("asyncio").run(
         executor1.execute_turn(session_id, user_id, "你好，我是张三")
     )
@@ -224,6 +226,7 @@ def test_multiturn_agent_state_restoration_across_restarts(test_users):
         chat_history_service=history, agent_session_store=store,
         pipeline_factory=test_users["pipeline_factory"],
     )
+    monkeypatch.setattr(executor2, "_build_model", lambda stream=False: _FallbackMockModel(stream=stream))
     reply2, msg_id2 = pytest.importorskip("asyncio").run(
         executor2.execute_turn(session_id, user_id, "我的名字是什么？")
     )

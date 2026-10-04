@@ -39,10 +39,12 @@ def test_base_url_must_be_gateway_root(monkeypatch):
         build_agent()
 
 
-def test_health_without_model_settings(monkeypatch):
-    for name in ("GOGO_MODEL_API_KEY", "GOGO_MODEL_NAME", "GOGO_MODEL_BASE_URL"):
-        monkeypatch.delenv(name, raising=False)
-    response = TestClient(app).get("/health")
+def test_health_after_model_settings_are_validated(monkeypatch):
+    monkeypatch.setenv("GOGO_MODEL_API_KEY", "local-test-key")
+    monkeypatch.setenv("GOGO_MODEL_NAME", "test-model")
+    monkeypatch.setenv("GOGO_MODEL_BASE_URL", "https://gateway.example.test/v1")
+    with TestClient(app) as client:
+        response = client.get("/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "agentscope_version": "2.0.8"}
 

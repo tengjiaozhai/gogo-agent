@@ -1,6 +1,6 @@
 # GoGo Agent：启动与 HTTP 入口
 
-本仓库正在按 [学习路线](docs/学习路线/README.md) 从 Java 版迁移到 AgentScope Python。001 提供最小终端 Agent 和只读日期工具；003 已确立 FastAPI 服务入口及无凭证健康检查。登录、会话等功能属于后续编号。
+本仓库正在按 [学习路线](docs/学习路线/README.md) 从 Java 版迁移到 AgentScope Python。001 提供最小终端 Agent 和只读日期工具；FastAPI 已接入认证、会话、意图流水线与只读信息子 Agent。024 起正式 API 启动会校验模型配置。
 
 ## 环境与启动
 
@@ -34,7 +34,7 @@ uv run --locked gogo-agent
 uv run --locked uvicorn gogo_agent.api:app --host 127.0.0.1 --port 8000
 ```
 
-访问 `http://127.0.0.1:8000/health` 得到 `status` 和 AgentScope 版本。该端点只证明进程和依赖可用，不检查模型网关。003 的架构和后续 HTTP 路由见[整体架构与入口记录](docs/架构/003-整体架构与HTTP入口.md)。
+启动前须在 `.env` 填写 `GOGO_MODEL_API_KEY`、`GOGO_MODEL_NAME` 和 `GOGO_MODEL_BASE_URL`；缺项会使 API 启动失败，错误只列配置名。`GOGO_MASTER_MAX_ITERS`、`GOGO_INFO_MAX_ITERS`、`GOGO_INFO_TOOL_TIMEOUT_SECONDS` 和 `GOGO_AGENT_MODEL_TIMEOUT_SECONDS` 可按 `.env.example` 调整。访问 `http://127.0.0.1:8000/health` 得到 `status` 和 AgentScope 版本；它不发起模型网关探测。仅检查本地安装时仍可执行 `uv run --locked gogo-agent --health`，无需模型凭证。配置与错误出口见[024 记录](docs/契约样例/024-Agent关键配置与失败出口.md)。
 
 ```sh
 uv run --locked pytest -q tests/test_001.py

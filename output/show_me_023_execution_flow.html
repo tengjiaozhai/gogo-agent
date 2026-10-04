@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>023 架构解密：从 HTTP 请求到 MasterModel._call_api 的调用之旅</title>
+  <style>
+    :root {
+      --bg: #0b1120;
+      --card-bg: #151f32;
+      --card-border: #24344d;
+      --card-hover: #1c2b45;
+      --primary: #38bdf8;
+      --secondary: #818cf8;
+      --accent: #f43f5e;
+      --warning: #fbbf24;
+      --success: #34d399;
+      --purple: #c084fc;
+      --text: #f1f5f9;
+      --text-muted: #94a3b8;
+      --code-bg: #0d1526;
+      --java-color: #f97316;
+      --python-color: #38bdf8;
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      padding: 2.5rem 1.25rem;
+    }
+    .container {
+      max-width: 1120px;
+      margin: 0 auto;
+    }
+    header {
+      text-align: center;
+      margin-bottom: 3rem;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.4rem 1rem;
+      border-radius: 9999px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      background: rgba(56, 189, 248, 0.12);
+      color: var(--primary);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      margin-bottom: 1rem;
+    }
+    h1 {
+      font-size: 2.25rem;
+      font-weight: 800;
+      margin-bottom: 0.75rem;
+      background: linear-gradient(135deg, #38bdf8 0%, #818cf8 50%, #c084fc 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .subtitle {
+      color: var(--text-muted);
+      font-size: 1.05rem;
+      max-width: 750px;
+      margin: 0 auto;
+    }
+
+    /* Section Styling */
+    .section {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 2rem;
+      margin-bottom: 2.5rem;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+    }
+    .section-title {
+      font-size: 1.4rem;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    .section-title .icon {
+      font-size: 1.5rem;
+    }
+
+    /* Step Timeline Flow */
+    .flow-steps {
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+      position: relative;
+    }
+    .step-item {
+      display: grid;
+      grid-template-columns: 60px 1fr;
+      gap: 1.25rem;
+      background: rgba(21, 31, 50, 0.7);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 1.25rem;
+      transition: all 0.25s ease;
+    }
+    .step-item:hover {
+      border-color: var(--primary);
+      background: var(--card-hover);
+      transform: translateX(4px);
+    }
+    .step-number {
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      background: rgba(56, 189, 248, 0.15);
+      color: var(--primary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.25rem;
+      font-weight: 800;
+      border: 1px solid rgba(56, 189, 248, 0.3);
+    }
+    .step-content h3 {
+      font-size: 1.1rem;
+      margin-bottom: 0.35rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    .step-tag {
+      font-size: 0.75rem;
+      padding: 0.2rem 0.5rem;
+      border-radius: 4px;
+      font-weight: 600;
+    }
+    .tag-http { background: rgba(52, 211, 153, 0.2); color: var(--success); }
+    .tag-ioc { background: rgba(129, 140, 248, 0.2); color: var(--secondary); }
+    .tag-factory { background: rgba(249, 115, 22, 0.2); color: var(--java-color); }
+    .tag-model { background: rgba(192, 132, 252, 0.2); color: var(--purple); }
+
+    .step-desc {
+      color: var(--text-muted);
+      font-size: 0.92rem;
+      margin-bottom: 0.75rem;
+    }
+    .code-preview {
+      background: var(--code-bg);
+      border: 1px solid #1f2d42;
+      border-radius: 8px;
+      padding: 0.75rem 1rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.85rem;
+      color: #93c5fd;
+      overflow-x: auto;
+    }
+
+    /* Comparison Tabs */
+    .tabs-header {
+      display: flex;
+      gap: 0.75rem;
+      border-bottom: 1px solid var(--card-border);
+      padding-bottom: 0.75rem;
+      margin-bottom: 1.5rem;
+    }
+    .tab-btn {
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--text-muted);
+      padding: 0.6rem 1.25rem;
+      border-radius: 8px;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 0.95rem;
+      transition: all 0.2s ease;
+    }
+    .tab-btn:hover {
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.05);
+    }
+    .tab-btn.active {
+      color: var(--primary);
+      background: rgba(56, 189, 248, 0.12);
+      border-color: rgba(56, 189, 248, 0.3);
+    }
+
+    /* Side-by-side Table */
+    .compare-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+    }
+    @media (max-width: 768px) {
+      .compare-grid { grid-template-columns: 1fr; }
+    }
+    .compare-card {
+      background: var(--code-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 1.25rem;
+    }
+    .compare-card-title {
+      font-size: 1rem;
+      font-weight: 700;
+      margin-bottom: 0.75rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .badge-java {
+      background: rgba(249, 115, 22, 0.15);
+      color: var(--java-color);
+      border: 1px solid rgba(249, 115, 22, 0.3);
+      padding: 0.2rem 0.6rem;
+      border-radius: 6px;
+      font-size: 0.8rem;
+    }
+    .badge-python {
+      background: rgba(56, 189, 248, 0.15);
+      color: var(--python-color);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      padding: 0.2rem 0.6rem;
+      border-radius: 6px;
+      font-size: 0.8rem;
+    }
+    pre {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.82rem;
+      line-height: 1.5;
+      color: #cbd5e1;
+      overflow-x: auto;
+    }
+    .kw { color: #f43f5e; font-weight: 600; }
+    .fn { color: #38bdf8; }
+    .cls { color: #facc15; }
+    .str { color: #34d399; }
+    .cm { color: #64748b; font-style: italic; }
+    .ann { color: #c084fc; font-weight: 600; }
+
+    /* Interactive Visualizer */
+    .interactive-box {
+      border: 1px dashed var(--secondary);
+      border-radius: 12px;
+      padding: 1.5rem;
+      background: rgba(129, 140, 248, 0.05);
+      margin-top: 1.5rem;
+    }
+    .node-chain {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.75rem;
+      margin-top: 1rem;
+    }
+    .node {
+      padding: 0.5rem 1rem;
+      border-radius: 8px;
+      background: #1e293b;
+      border: 1px solid #334155;
+      font-size: 0.85rem;
+      font-weight: 600;
+    }
+    .node.active {
+      border-color: var(--primary);
+      background: rgba(56, 189, 248, 0.2);
+      color: var(--primary);
+      box-shadow: 0 0 15px rgba(56, 189, 248, 0.3);
+    }
+    .arrow {
+      color: var(--text-muted);
+      font-size: 1.1rem;
+    }
+
+    /* Takeaways */
+    .takeaway-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1.25rem;
+      margin-top: 1.25rem;
+    }
+    .takeaway-card {
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 1.25rem;
+    }
+    .takeaway-card h4 {
+      color: var(--primary);
+      margin-bottom: 0.5rem;
+      font-size: 1rem;
+    }
+    .takeaway-card p {
+      font-size: 0.88rem;
+      color: var(--text-muted);
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div class="badge">💡 阶段 C · 023 架构深入</div>
+    <h1>从 HTTP 请求到 MasterModel._call_api</h1>
+    <p class="subtitle">一条贯穿 FastAPI、IoC 控制反转、工厂方法覆写与 AgentScope 多态推理的完整调用链路，用 Java 经典工程化思维轻松看透！</p>
+  </header>
+
+  <!-- 第一部分：调用全景追踪 -->
+  <section class="section">
+    <div class="section-title">
+      <span class="icon">🧭</span>
+      <span>1. 十步调用全景：HTTP 如何一路打穿到 _call_api</span>
+    </div>
+    <div class="flow-steps">
+
+      <div class="step-item">
+        <div class="step-number">1</div>
+        <div class="step-content">
+          <h3>
+            <span>TestClient 模拟发出 HTTP 请求</span>
+            <span class="step-tag tag-http">HTTP 入口</span>
+          </h3>
+          <p class="step-desc">测试启动 In-Process 测试客户端，向 <code>/api/chat/{session_id}</code> 发起 POST，带上 Alice 用户的 JWT 认证头。</p>
+          <div class="code-preview">response = TestClient(app).post(f"/api/chat/{session_id}", headers={...}, json={"message": "请介绍一处景点"})</div>
+        </div>
+      </div>
+
+      <div class="step-item">
+        <div class="step-number">2</div>
+        <div class="step-content">
+          <h3>
+            <span>FastAPI 依赖解析：命中 dependency_overrides</span>
+            <span class="step-tag tag-ioc">IoC 控制反转</span>
+          </h3>
+          <p class="step-desc">路由方法 <code>send_chat_message</code> 声明了 <code>Depends(get_chat_executor)</code>。FastAPI 检查发现容器中注入了测试指定的覆盖项，取出已准备好的测试 <code>executor</code> 实例。</p>
+          <div class="code-preview">app.dependency_overrides[get_chat_executor] = lambda: executor</div>
+        </div>
+      </div>
+
+      <div class="step-item">
+        <div class="step-number">3</div>
+        <div class="step-content">
+          <h3>
+            <span>控制器委托：调用 executor.execute_turn()</span>
+            <span class="step-tag tag-http">业务服务</span>
+          </h3>
+          <p class="step-desc">Controller 校验用户身份后，将调用转发给执行器。执行器负责保存用户消息、调度意图流水线并准备 Agent 环境。</p>
+          <div class="code-preview">reply_text, msg_id = await executor.execute_turn(session_id=sessionId, user_id=current_user.user_id, message=req.message)</div>
+        </div>
+      </div>
+
+      <div class="step-item">
+        <div class="step-number">4</div>
+        <div class="step-content">
+          <h3>
+            <span>装配智能体：执行 _build_agent()</span>
+            <span class="step-tag tag-factory">组装编排</span>
+          </h3>
+          <p class="step-desc">意图识别命中 <code>GENERAL_INFO</code>，执行器决定为主 Agent 挂载只读的 <code>info_agent</code> 工具，并开始为其构建模型驱动。</p>
+          <div class="code-preview">agent = self._build_agent(state=agent_state, prepared=prepared, request=request, tool_calls=tool_calls)</div>
+        </div>
+      </div>
+
+      <div class="step-item">
+        <div class="step-number">5</div>
+        <div class="step-content">
+          <h3>
+            <span>【核心拐点】调用动态覆写的 _build_model 工厂</span>
+            <span class="step-tag tag-factory">工厂方法覆盖</span>
+          </h3>
+          <p class="step-desc"><code>_build_agent</code> 内部调用 <code>self._build_model()</code>。但在脚本中，该方法被猴子补丁（动态绑定）替换为了本地闭包 <code>build_model</code>！</p>
+          <div class="code-preview">executor._build_model = build_model  # 第一次被调用时 created=1，返回 master_model</div>
+        </div>
+      </div>
+
+      <div class="step-item">
+        <div class="step-number">6</div>
+        <div class="step-content">
+          <h3>
+            <span>组装 AgentScope Agent：注入 master_model</span>
+            <span class="step-tag tag-model">面向接口多态</span>
+          </h3>
+          <p class="step-desc">AgentScope 的 <code>Agent</code> 对象接收 <code>master_model</code> 作为底层推理驱动。Agent 只依赖其抽象契约，完全不知道它是真实的 DeepSeek 还是 Mock 替身。</p>
+          <div class="code-preview">return Agent(name="GoGo", model=master_model, toolkit=toolkit, state=state)</div>
+        </div>
+      </div>
+
+      <div class="step-item">
+        <div class="step-number">7</div>
+        <div class="step-content">
+          <h3>
+            <span>启动推理：await agent.reply(...)</span>
+            <span class="step-tag tag-model">ReAct 运行</span>
+          </h3>
+          <p class="step-desc">执行器将用户消息封装为 <code>UserMsg</code> 喂给 Agent。AgentScope 启动 ReAct（思考-行动-观察）决策循环。</p>
+          <div class="code-preview">reply_msg = await agent.reply(UserMsg(name="user", content=prepared.effective_question.question))</div>
+        </div>
+      </div>
+
+      <div class="step-item">
+        <div class="step-number">8</div>
+        <div class="step-content">
+          <h3>
+            <span>AgentScope 框架层调用 model(...)</span>
+            <span class="step-tag tag-model">模板方法模式</span>
+          </h3>
+          <p class="step-desc">AgentScope 框架基类 <code>ChatModelBase</code> 定义了通用的重试、拦截与流式适配骨架，内部调用钩子方法 <code>_call_api</code>。</p>
+          <div class="code-preview"># AgentScope 内部源码：
+response = await self.model(messages=prompt, tools=tools_schemas)</div>
+        </div>
+      </div>
+
+      <div class="step-item">
+        <div class="step-number">9</div>
+        <div class="step-content">
+          <h3>
+            <span>【目的地】执行 MasterModel._call_api</span>
+            <span class="step-tag tag-model">目标命中 🎯</span>
+          </h3>
+          <p class="step-desc">由于 Java 式的多态机制，执行流精确落入我们在脚本中编写的 <code>MasterModel._call_api</code>，输出控制台日志并生成 <code>ToolCallBlock</code>！</p>
+          <div class="code-preview">async def _call_api(self, model_name, messages, tools=None, ...):
+    print(f"  主 Agent 第 {self.call_count} 次模型调用，可见工具：{names}")</div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- 第二部分：Java 工程化视角深度映射 -->
+  <section class="section">
+    <div class="section-title">
+      <span class="icon">☕</span>
+      <span>2. 从 Java 工程化角度怎么理解？（概念一一映射）</span>
+    </div>
+    <p style="color: var(--text-muted); margin-bottom: 1.5rem;">
+      很多习惯 Spring Boot / Java 企业级开发的工程师刚看这段代码会好奇：“为什么没有配置 Spring 上下文就能偷天换日？”——其实两者底层的软件工程设计模式完全是孪生兄弟！
+    </p>
+
+    <div class="compare-grid">
+
+      <!-- 卡片 1: TestClient vs MockMvc -->
+      <div class="compare-card">
+        <div class="compare-card-title">
+          <span>1. HTTP 容器内驱动</span>
+          <span class="badge-java">Spring: MockMvc</span>
+        </div>
+        <pre><span class="cm">// Java (Spring Boot Test)</span>
+<span class="ann">@Autowired</span> <span class="kw">private</span> <span class="cls">MockMvc</span> mockMvc;
+
+mockMvc.<span class="fn">perform</span>(<span class="fn">post</span>(<span class="str">"/api/chat/"</span> + sessionId)
+    .<span class="fn">header</span>(<span class="str">"Authorization"</span>, token)
+    .<span class="fn">contentType</span>(APPLICATION_JSON)
+    .<span class="fn">content</span>(<span class="str">"{\"message\":\"介绍景点\"}"</span>));</pre>
+        <div style="margin-top: 0.75rem;">
+          <span class="badge-python">Python (FastAPI TestClient)</span>
+        </div>
+        <pre><span class="cm"># Python: 不启动真实 Socket，直接走 ASGI 管道</span>
+response = <span class="cls">TestClient</span>(app).<span class="fn">post</span>(
+    f<span class="str">"/api/chat/{session_id}"</span>,
+    headers={<span class="str">"Authorization"</span>: token},
+    json={<span class="str">"message"</span>: <span class="str">"请介绍一处景点"</span>}
+)</pre>
+      </div>
+
+      <!-- 卡片 2: dependency_overrides vs @MockBean -->
+      <div class="compare-card">
+        <div class="compare-card-title">
+          <span>2. IoC 依赖覆写</span>
+          <span class="badge-java">Spring: @MockBean</span>
+        </div>
+        <pre><span class="cm">// Java: 容器启动前替换 Bean 定义</span>
+<span class="ann">@SpringBootTest</span>
+<span class="kw">public class</span> <span class="cls">ChatTest</span> {
+    <span class="ann">@MockBean</span>
+    <span class="kw">private</span> <span class="cls">ChatAgentExecutor</span> executor;
+}</pre>
+        <div style="margin-top: 0.75rem;">
+          <span class="badge-python">Python: dependency_overrides</span>
+        </div>
+        <pre><span class="cm"># Python: 在路由执行 Depends 解析前替换依赖工厂</span>
+app.dependency_overrides[get_chat_executor] = (
+    <span class="kw">lambda</span>: executor
+)</pre>
+      </div>
+
+      <!-- 卡片 3: _build_model vs Factory Method -->
+      <div class="compare-card">
+        <div class="compare-card-title">
+          <span>3. 模型构造控制</span>
+          <span class="badge-java">Spring: 工厂方法覆写</span>
+        </div>
+        <pre><span class="cm">// Java: 重写工厂方法或注入 MockFactory</span>
+<span class="kw">public class</span> <span class="cls">TestExecutor</span> <span class="kw">extends</span> <span class="cls">ChatAgentExecutor</span> {
+    <span class="ann">@Override</span>
+    <span class="kw">protected</span> <span class="cls">ChatModel</span> <span class="fn">buildModel</span>() {
+        <span class="kw">return</span> <span class="kw">this</span>.created++ == 0 ? masterModel : infoModel;
+    }
+}</pre>
+        <div style="margin-top: 0.75rem;">
+          <span class="badge-python">Python: 实例方法动态覆盖</span>
+        </div>
+        <pre><span class="cm"># Python: 动态替换实例方法 (Duck Typing / Monkey Patch)</span>
+<span class="kw">def</span> <span class="fn">build_model</span>(stream=<span class="kw">False</span>):
+    created += 1
+    <span class="kw">return</span> master_model <span class="kw">if</span> created == 1 <span class="kw">else</span> info_model
+
+executor._build_model = build_model</pre>
+      </div>
+
+      <!-- 卡片 4: _call_api vs Template Method -->
+      <div class="compare-card">
+        <div class="compare-card-title">
+          <span>4. 模型执行钩子</span>
+          <span class="badge-java">GoF: 模板方法模式</span>
+        </div>
+        <pre><span class="cm">// Java: 抽象基类定义执行骨架，子类实现具体网络钩子</span>
+<span class="kw">public abstract class</span> <span class="cls">BaseChatModel</span> {
+    <span class="kw">public final</span> <span class="cls">ChatResponse</span> <span class="fn">call</span>(...) {
+        <span class="cm">// 通用重试、日志、校验</span>
+        <span class="kw">return</span> <span class="fn">callApi</span>(...); <span class="cm">// 抽象钩子</span>
+    }
+    <span class="kw">protected abstract</span> <span class="cls">ChatResponse</span> <span class="fn">callApi</span>(...);
+}</pre>
+        <div style="margin-top: 0.75rem;">
+          <span class="badge-python">AgentScope: _call_api 多态扩展</span>
+        </div>
+        <pre><span class="kw">class</span> <span class="cls">MasterModel</span>(_FallbackMockModel):
+    <span class="cm"># AgentScope 内部会在 model.call() 时回调 _call_api</span>
+    <span class="kw">async def</span> <span class="fn">_call_api</span>(self, model_name, messages, ...):
+        <span class="kw">return</span> ChatResponse(...)
+</pre>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- 第三部分：关键设计思想总结 -->
+  <section class="section">
+    <div class="section-title">
+      <span class="icon">💎</span>
+      <span>3. 为什么这样设计？架构师的思考维度</span>
+    </div>
+
+    <div class="takeaway-grid">
+      <div class="takeaway-card">
+        <h4>1. 零网络依赖与极速运行</h4>
+        <p>通过替换 <code>_build_model</code>，整个端到端测试不需要连接真实 DeepSeek 网关，耗时从几秒缩短到 50ms，且完全不消耗 Token 费用。</p>
+      </div>
+      <div class="takeaway-card">
+        <h4>2. 确定性测试 (Deterministic)</h4>
+        <p>真实大模型具有不可预测的温度概率与幻觉，MockModel 能够精准控制第一轮返回 <code>ToolCallBlock</code>、第二轮返回文本汇总，实现 100% 稳定的自动化回归。</p>
+      </div>
+      <div class="takeaway-card">
+        <h4>3. 契约真实性 (Real In-Process Wire)</h4>
+        <p>虽然模型是 Mock 的，但 HTTP 序列化/反序列化、鉴权校验、意图流水线规则判断、AgentScope 的 Toolkit 工具调度、ChatHistory 数据库保存**全都是 100% 真实生产代码**。</p>
+      </div>
+      <div class="takeaway-card">
+        <h4>4. 深度安全防御演练</h4>
+        <p>在不修改核心业务代码的情况下，可以轻松向 MasterModel 注入 <code>write_order</code>（越权工具），从而证明系统的白名单机制能在模型产生幻觉时精准阻断。</p>
+      </div>
+    </div>
+  </section>
+</div>
+</body>
+</html>

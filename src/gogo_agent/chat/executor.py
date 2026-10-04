@@ -1,14 +1,14 @@
 """对话执行层：集成 AgentScope 2.x Agent 与 L1 业务历史、L2 AgentState 会话记忆持久化。"""
 
+import asyncio
 import logging
-import os
 from inspect import isawaitable
 from typing import AsyncContextManager, AsyncGenerator, Callable, Optional
 
-from agentscope.agent import Agent
+from agentscope.agent import Agent, ModelConfig, ReActConfig
 from agentscope.credential import DeepSeekCredential, OpenAICredential
-from agentscope.event import TextBlockDeltaEvent
-from agentscope.message import TextBlock, UserMsg
+from agentscope.event import ReplyFinishedReason, TextBlockDeltaEvent
+from agentscope.message import Msg, TextBlock, UserMsg
 from agentscope.model import ChatResponse, DeepSeekChatModel, OpenAIChatModel
 from agentscope.permission import PermissionBehavior, PermissionDecision
 from agentscope.state import AgentState
@@ -18,10 +18,14 @@ from pydantic import ValidationError
 
 from gogo_agent.intent.models import IntentCategory, QueryInput
 from gogo_agent.intent.pipeline import IntentPipelineService, PreparedIntentTurn
-from gogo_agent.intent.runtime import load_intent_runtime_settings, open_intent_pipeline
+from gogo_agent.intent.runtime import open_intent_pipeline
 from gogo_agent.request_context import RequestContext, current_trace_id, trace_scope
 
 from .continuation import ActiveAgentContinuation, TurnEntry, choose_turn_entry
+from .config import (
+    INFO_SYSTEM_PROMPT, MODEL_MAX_RETRIES, ChatAgentSettings,
+    load_chat_agent_settings, master_system_prompt, require_model_configuration,
+)
 from .repository import (
     AgentSessionStoreProtocol,
     create_agent_session_store,
@@ -32,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 
 class _FallbackMockModel(OpenAIChatModel):
-    """离线回退模拟模型：在无 API Key 等凭证时提供离线响应与流式分块。"""
+    """测试和学习脚本显式注入的离线模型替身。"""
 
     def __init__(self, stream: bool = False):
         super().__init__(
@@ -93,11 +97,13 @@ class ChatAgentExecutor:
         agent_session_store: Optional[AgentSessionStoreProtocol] = None,
         pipeline_factory: Callable[[ChatHistoryService], AsyncContextManager[IntentPipelineService]] = open_intent_pipeline,
         active_continuation: ActiveAgentContinuation | None = None,
+        settings: ChatAgentSettings | None = None,
     ):
         self._history_service = chat_history_service or ChatHistoryService()
         self._session_store = agent_session_store or create_agent_session_store()
         self._pipeline_factory = pipeline_factory
         self._active_continuation = active_continuation
+        self._settings = settings or load_chat_agent_settings()
 
     @property
     def history_service(self) -> ChatHistoryService:
@@ -108,13 +114,8 @@ class ChatAgentExecutor:
         return self._session_store
 
     def _build_model(self, stream: bool = False):
-        """构建 ChatModel：若存在环境变量凭证则构建真实大模型，否则回退到模拟模型。"""
-        required = ("GOGO_MODEL_API_KEY", "GOGO_MODEL_NAME", "GOGO_MODEL_BASE_URL")
-        has_env = all(bool(os.environ.get(k, "").strip()) for k in required)
-        if not has_env:
-            return _FallbackMockModel(stream=stream)
-
-        settings = load_intent_runtime_settings()
+        """正式模型复用已验证网关配置；离线测试显式注入模型替身。"""
+        settings = require_model_configuration()
         return DeepSeekChatModel(
             credential=DeepSeekCredential(
                 api_key=settings.api_key,
@@ -122,6 +123,11 @@ class ChatAgentExecutor:
             ),
             model=settings.chat_model_name,
             stream=stream,
+            max_retries=MODEL_MAX_RETRIES,
+            client_kwargs={
+                "max_retries": MODEL_MAX_RETRIES,
+                "timeout": self._settings.model_timeout_seconds,
+            },
         )
 
     @staticmethod
@@ -149,13 +155,14 @@ class ChatAgentExecutor:
         """每次调用创建无业务工具的只读子 Agent，不保存独立会话状态。"""
         return Agent(
             name=self.INFO_AGENT_NAME,
-            system_prompt=(
-                "你是 GoGo 的只读信息查询子智能体。仅回答普通公共信息问题。"
-                "当前未接入差旅政策、实时天气、签证或订单数据；缺少依据时明确说明。"
-                "不要声称已查询或修改用户账户、差旅单、预订和审批。"
-            ),
+            system_prompt=INFO_SYSTEM_PROMPT,
             model=self._build_model(stream=False),
             state=AgentState(session_id=self._state_session_id(request.session_id, request.user_id)),
+            react_config=ReActConfig(
+                max_iters=self._settings.info_max_iters,
+                interruption_raise_cancelled_error=True,
+            ),
+            model_config=ModelConfig(max_retries=MODEL_MAX_RETRIES),
         )
 
     def _build_agent(
@@ -167,58 +174,67 @@ class ChatAgentExecutor:
         stream: bool = False,
     ) -> Agent:
         """用识别结果决定本轮可见工具；身份仍从可信请求参数传入。"""
-        try:
-            model = self._build_model(stream=stream)
-        except TypeError:
-            model = self._build_model()
+        model = self._build_model(stream=stream)
         intents = "、".join(item.intent.value for item in prepared.decision.result.intents)
         toolkit = None
-        tool_instruction = "本轮没有可调用的业务子智能体；无法办理的事项请直接说明。"
         if any(item.intent == IntentCategory.GENERAL_INFO for item in prepared.decision.result.intents):
             async def ask_info_agent(question: str) -> str:
                 """委派普通公共信息问题给只读 InfoAgent，再返回其回答。"""
                 child: Agent | None = None
                 status = "failed"
+                error_type: str | None = None
                 try:
                     child = self._build_info_agent(request)
-                    reply = await child.reply(UserMsg(name=self.COORDINATOR_AGENT_NAME, content=question))
+                    async with asyncio.timeout(self._settings.info_tool_timeout_seconds) as deadline:
+                        reply = await child.reply(UserMsg(name=self.COORDINATOR_AGENT_NAME, content=question))
+                    if deadline.expired():
+                        raise TimeoutError("InfoAgent 工具调用超时")
+                    task = asyncio.current_task()
+                    if task is not None and task.cancelling():
+                        raise asyncio.CancelledError
+                    if reply.finished_reason != ReplyFinishedReason.COMPLETED:
+                        raise RuntimeError(f"InfoAgent finished with {reply.finished_reason}")
                     answer = reply.get_text_content() or ""
                     if not answer.strip():
                         raise ValueError("信息子 Agent 没有返回可用回答")
                     status = "completed"
                     return answer
+                except BaseException as exc:
+                    error_type = type(exc).__name__
+                    raise
                 finally:
-                    tool_calls.append({
+                    record = {
                         "tool_name": self.INFO_TOOL_NAME,
                         "agent_name": self.INFO_AGENT_NAME,
                         "status": status,
                         "trace_id": request.trace_id,
-                    })
+                    }
+                    if error_type:
+                        record["error_type"] = error_type
+                    tool_calls.append(record)
                     await self._close_agent_model(child)
 
             toolkit = Toolkit(tools=[FunctionTool(
                 ask_info_agent,
                 name=self.INFO_TOOL_NAME,
                 is_read_only=True,
+                is_concurrency_safe=False,
                 permission=PermissionDecision(
                     behavior=PermissionBehavior.ALLOW,
                     message="允许只读公共信息查询",
                 ),
             )])
-            tool_instruction = "普通公共信息问题请调用 info_agent，再根据其结果回答。"
         return Agent(
             name=self.COORDINATOR_AGENT_NAME,
-            system_prompt=(
-                "你是 GoGo 差旅助手的核心智能体。你负责协助用户办理差旅申请、"
-                "行程规划、差旅政策咨询与预订服务。请保持专业、简洁和友善。"
-                f"本轮识别的诉求顺序为：{intents}。按顺序回应，不丢失前项结果。"
-                "识别结果只是理解线索，不是身份、审批或下单授权。"
-                f"{tool_instruction}"
-                "目前没有业务写入工具，不得声称已经提交申请、保存方案或完成预订。"
-            ),
+            system_prompt=master_system_prompt(intents, info_tool_enabled=toolkit is not None),
             model=model,
             toolkit=toolkit,
             state=state,
+            react_config=ReActConfig(
+                max_iters=self._settings.master_max_iters,
+                interruption_raise_cancelled_error=True,
+            ),
+            model_config=ModelConfig(max_retries=MODEL_MAX_RETRIES),
         )
 
     def _save_user_turn(self, session_id: str, user_id: str, message: str) -> RequestContext:
@@ -300,6 +316,22 @@ class ChatAgentExecutor:
         return extra
 
     @staticmethod
+    def _completion_error(
+        tool_calls: list[dict[str, str]], reason: ReplyFinishedReason | None,
+    ) -> str | None:
+        """不把工具失败、中断或轮次耗尽保存为成功回复。"""
+        failed = next((call for call in tool_calls if call["status"] == "failed"), None)
+        if failed:
+            return f"信息子 Agent 调用失败（{failed.get('error_type', 'ToolError')}）"
+        if reason == ReplyFinishedReason.EXCEED_MAX_ITERS:
+            return "主 Agent 达到最大推理轮次"
+        if reason == ReplyFinishedReason.INTERRUPTED:
+            return "对话已中断"
+        if reason == ReplyFinishedReason.ERROR:
+            return "主 Agent 未能完成回复"
+        return None
+
+    @staticmethod
     def _clarification(prepared: PreparedIntentTurn) -> str:
         """缺指代对象时请求用户补齐，不把空改写送进主 Agent。"""
         return "请补充必要的上下文后再继续：" + "；".join(prepared.rewrite.missing_context)
@@ -355,6 +387,14 @@ class ChatAgentExecutor:
                 raise HTTPException(503, f"对话生成失败（{type(exc).__name__}）") from None
             finally:
                 await self._close_agent_model(agent)
+            task = asyncio.current_task()
+            if task is not None and task.cancelling():
+                raise asyncio.CancelledError
+            error = self._completion_error(
+                tool_calls, getattr(reply_msg, "finished_reason", None),
+            )
+            if error:
+                raise HTTPException(503, error)
             reply_text = reply_msg.get_text_content() or ""
 
             # 先保存业务可见回复；失败时不得写入一份看不到的 AgentState。
@@ -448,6 +488,7 @@ class ChatAgentExecutor:
         accumulated_chunks: list[str] = []
         agent: Agent | None = None
         tool_calls: list[dict[str, str]] = []
+        final_reason: ReplyFinishedReason | None = None
 
         try:
             agent_state = self._session_store.load_agent_state(
@@ -470,11 +511,22 @@ class ChatAgentExecutor:
                     lines = event.delta.split("\n")
                     data_lines = "\n".join(f"data: {line}" for line in lines)
                     yield f"event: message\n{data_lines}\n\n"
+                elif isinstance(event, Msg):
+                    final_reason = event.finished_reason
         except Exception as exc:
             yield f"event: error\ndata: 对话生成失败（{type(exc).__name__}）\n\n"
             return
         finally:
             await self._close_agent_model(agent)
+
+        task = asyncio.current_task()
+        if task is not None and task.cancelling():
+            raise asyncio.CancelledError
+
+        error = self._completion_error(tool_calls, final_reason)
+        if error:
+            yield f"event: error\ndata: {error}\n\n"
+            return
 
         full_reply_text = "".join(accumulated_chunks)
         # 保底容错：若未捕获到 delta 事件但状态中已生成消息，输出完整回复
