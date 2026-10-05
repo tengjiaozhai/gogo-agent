@@ -17,8 +17,10 @@ uv run --locked gogo-agent --health
 在项目根目录的 `.env` 中设置三个环境变量。需要新建文件时，可从 `.env.example` 复制；已有 `.env` 请保留并补齐变量：
 
 - `GOGO_MODEL_BASE_URL`：OpenAI 兼容网关的根地址；CLI 使用 `/v1/chat/completions`。
-- `GOGO_MODEL_NAME`：网关接受的模型标识。
+- `GOGO_MODEL_NAME`：网关接受的模型标识；HTTP 中作为 GoGo 主模型，001 CLI 也读取此项。
 - `GOGO_MODEL_API_KEY`：测试密钥，仅从环境变量或 `.env` 读取，不写入仓库。
+
+HTTP 意图改写、L3 意图兜底和 InfoAgent 读取 `GOGO_STABLE_MODEL_NAME`，默认 `glm-5.2`；GoGo 主模型按 `GOGO_MODEL_NAME` 选择，对齐 Java 主档时可填 `qwen3.7-max`。两档复用同一网关地址和密钥。改写/识别及 HTTP Agent 使用 AgentScope 的 OpenAI 兼容 Chat Completions 适配器；001 CLI 仍是独立的日期工具示例。每次正式模型调用在 Uvicorn 的 INFO 日志记录角色、模型名、耗时和可用 token，缺少 usage 时显示 `unavailable`，不记录密钥或消息内容。离线对照见 [026 脚本](scripts/demo_026_model_roles.py)。
 
 CLI 启动时会从项目根目录加载 `.env`。该文件已加入 Git 忽略规则，不要提交密钥。配置后运行：
 
@@ -34,7 +36,7 @@ uv run --locked gogo-agent
 uv run --locked uvicorn gogo_agent.api:app --host 127.0.0.1 --port 8000
 ```
 
-启动前须在 `.env` 填写 `GOGO_MODEL_API_KEY`、`GOGO_MODEL_NAME` 和 `GOGO_MODEL_BASE_URL`；缺项会使 API 启动失败，错误只列配置名。`GOGO_MASTER_MAX_ITERS`、`GOGO_INFO_MAX_ITERS`、`GOGO_INFO_TOOL_TIMEOUT_SECONDS` 和 `GOGO_AGENT_MODEL_TIMEOUT_SECONDS` 可按 `.env.example` 调整。访问 `http://127.0.0.1:8000/health` 得到 `status` 和 AgentScope 版本；它不发起模型网关探测。仅检查本地安装时仍可执行 `uv run --locked gogo-agent --health`，无需模型凭证。配置与错误出口见[024 记录](docs/契约样例/024-Agent关键配置与失败出口.md)。
+启动前须在 `.env` 填写 `GOGO_MODEL_API_KEY`、`GOGO_MODEL_NAME` 和 `GOGO_MODEL_BASE_URL`；缺项会使 API 启动失败，错误只列配置名。显式设置空白 `GOGO_STABLE_MODEL_NAME` 也会启动失败。`GOGO_MASTER_MAX_ITERS`、`GOGO_INFO_MAX_ITERS`、`GOGO_INFO_TOOL_TIMEOUT_SECONDS` 和 `GOGO_AGENT_MODEL_TIMEOUT_SECONDS` 可按 `.env.example` 调整。访问 `http://127.0.0.1:8000/health` 得到 `status` 和 AgentScope 版本；它不发起模型网关探测。仅检查本地安装时仍可执行 `uv run --locked gogo-agent --health`，无需模型凭证。配置与错误出口见[024 记录](docs/契约样例/024-Agent关键配置与失败出口.md)。
 
 ```sh
 uv run --locked pytest -q tests/test_001.py

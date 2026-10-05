@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, AsyncIterator
 from urllib.parse import urlparse
 
-from agentscope.credential import DeepSeekCredential, OpenAICredential
+from agentscope.credential import OpenAICredential
 from agentscope.embedding import OpenAIEmbeddingModel
 from agentscope.rag import QdrantStore
 from dotenv import load_dotenv
@@ -26,11 +26,12 @@ from .vector import IntentVectorConfig, IntentVectorIndex, IntentVectorMatcher
 
 @dataclass(frozen=True)
 class IntentRuntimeSettings:
-    """同一网关的聊天模型、embedding 模型与 Qdrant 索引配置。"""
+    """同一网关的主/稳定聊天模型、embedding 模型与 Qdrant 索引配置。"""
 
     api_key: str = field(repr=False)
     base_url: str
     chat_model_name: str
+    stable_model_name: str
     vector: IntentVectorConfig
 
 
@@ -65,6 +66,7 @@ def load_intent_runtime_settings() -> IntentRuntimeSettings:
         api_key=key,
         base_url=base_url,
         chat_model_name=os.getenv("GOGO_MODEL_NAME", "").strip(),
+        stable_model_name=os.getenv("GOGO_STABLE_MODEL_NAME", "glm-5.2").strip(),
         vector=vector,
     )
 
@@ -73,11 +75,11 @@ def load_intent_runtime_settings() -> IntentRuntimeSettings:
 async def open_intent_pipeline(history_service: ChatHistoryService) -> AsyncIterator[IntentPipelineService]:
     """每次请求创建并关闭模型与 Qdrant 客户端，不在聊天请求中重建索引。"""
     settings = load_intent_runtime_settings()
-    if not settings.chat_model_name:
-        raise ValueError("请在 .env 设置 GOGO_MODEL_NAME")
+    if not settings.stable_model_name:
+        raise ValueError("请在 .env 设置 GOGO_STABLE_MODEL_NAME")
     text_model = create_text_model(
-        DeepSeekCredential(api_key=settings.api_key, base_url=settings.base_url),
-        settings.chat_model_name,
+        OpenAICredential(api_key=settings.api_key, base_url=settings.base_url),
+        settings.stable_model_name,
     )
     embedding = OpenAIEmbeddingModel(
         credential=OpenAICredential(api_key=settings.api_key, base_url=settings.base_url),

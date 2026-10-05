@@ -115,10 +115,10 @@ def run_case(requested_tool: str) -> None:
     info_model = InfoModel()
     created = 0
 
-    def build_model(stream=False):
+    def build_model(stream=False, *, role="master"):
         nonlocal created
         created += 1
-        return master_model if created == 1 else info_model
+        return master_model if role == "master" else info_model
 
     executor._build_model = build_model
     previous = dict(app.dependency_overrides)

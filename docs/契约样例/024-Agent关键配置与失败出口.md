@@ -2,11 +2,12 @@
 
 ## 当前配置入口
 
-正式 HTTP 服务在 [`api.py`](../../src/gogo_agent/api.py) 的 lifespan 中读取模型网关和 Agent 参数，缺少 `GOGO_MODEL_API_KEY`、`GOGO_MODEL_NAME` 或 `GOGO_MODEL_BASE_URL` 时启动失败；这一步只校验配置，不请求模型或 Qdrant。001 的 `gogo-agent --health` 仍可在无凭证环境检查安装。聊天主/子 Agent 共享 [`chat/config.py`](../../src/gogo_agent/chat/config.py) 的提示词与运行参数；模型网关沿用 017 的 `load_intent_runtime_settings()`。
+正式 HTTP 服务在 [`api.py`](../../src/gogo_agent/api.py) 的 lifespan 中读取模型网关和 Agent 参数，缺少 `GOGO_MODEL_API_KEY`、`GOGO_MODEL_NAME` 或 `GOGO_MODEL_BASE_URL` 时启动失败；显式设置空白 `GOGO_STABLE_MODEL_NAME` 也失败。这一步只校验配置，不请求模型或 Qdrant。001 的 `gogo-agent --health` 仍可在无凭证环境检查安装。聊天主/子 Agent 共享 [`chat/config.py`](../../src/gogo_agent/chat/config.py) 的提示词与运行参数；模型网关沿用 017 的 `load_intent_runtime_settings()`，026 起按主档和稳定档选模型名。
 
 | 参数 | 默认或规则 | 运行位置 |
 | --- | --- | --- |
 | `GOGO_MODEL_API_KEY`、`GOGO_MODEL_NAME`、`GOGO_MODEL_BASE_URL` | 正式 API 必填；报错只列变量名，不输出密钥 | 启动校验、模型工厂、意图流水线 |
+| `GOGO_STABLE_MODEL_NAME` | 默认 `glm-5.2`；显式空白值无效 | 改写、L3 意图识别和 InfoAgent |
 | `GOGO_MASTER_MAX_ITERS` | 15，正整数；对应 Java Master 的 15 轮 | `GoGo` 的 `ReActConfig.max_iters` |
 | `GOGO_INFO_MAX_ITERS` | 5，正整数；对应 Java Info 的 5 轮 | `InfoAgent` 的 `ReActConfig.max_iters` |
 | `GOGO_INFO_TOOL_TIMEOUT_SECONDS` | 60，有限正数；对应 Java Info 的单次工具 1 分钟 | `info_agent` 工具闭包的 `asyncio.timeout` |

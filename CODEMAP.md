@@ -19,6 +19,7 @@
 - [`src/gogo_agent/cli.py`](src/gogo_agent/cli.py) — 装配仅含日期工具的 Agent 并提供终端入口。
 - [`src/gogo_agent/tools.py`](src/gogo_agent/tools.py) — 提供不依赖模型的本地日期工具。
 - [`src/gogo_agent/api.py`](src/gogo_agent/api.py) — 提供唯一 FastAPI 入口、启动配置校验、认证与会话路由及 API 文档和健康检查。
+- [`src/gogo_agent/model.py`](src/gogo_agent/model.py) — 为主/信息/意图调用统一创建 OpenAI 兼容模型并记录单次耗时与可用 token。
 - [`src/gogo_agent/request_context.py`](src/gogo_agent/request_context.py) — 定义服务端可信请求参数及只承载日志追踪号的异步任务作用域。
 
 ## src/gogo_agent/auth
@@ -82,9 +83,11 @@
 - [`docs/契约样例/018-意图回归语料.json`](docs/契约样例/018-意图回归语料.json) — 保存误路由与正确样例的固定历史、期望改写和命中层。
 - [`docs/契约样例/018-意图误路由修复.md`](docs/契约样例/018-意图误路由修复.md) — 记录否定动作、短追问和三亚出差等修复前后差异与验收。
 - [`docs/契约样例/019-主协调入口与直跳取舍.md`](docs/契约样例/019-主协调入口与直跳取舍.md) — 记录不启用高置信直跳的依据、当前协调入口验收及后续候选条件。
-- [`docs/契约样例/020-执行顺序与续跑边界.md`](docs/契约样例/020-执行顺序与续跑边界.md) — 对照新请求与活跃 Agent 续跑的序列、标题/历史时点及当前验收边界。
+- [`docs/契约样例/020-执行顺序与续跑边界.md`](docs/契约样例/020-执行顺序与续跑边界.md) — 对照新请求与活跃 Agent 续跑顺序，并提供面向 Java 工程师的逐步调试与验收指南。
 - [`docs/契约样例/021-请求上下文与信任边界.md`](docs/契约样例/021-请求上下文与信任边界.md) — 区分认证上下文与模型可见业务线索，记录传参、伪造身份及追踪验收。
 - [`docs/契约样例/024-Agent关键配置与失败出口.md`](docs/契约样例/024-Agent关键配置与失败出口.md) — 对照主/信息 Agent 的配置来源、Java 差异、失败出口与运行验收。
+- [`docs/契约样例/025-Agent配置矩阵.md`](docs/契约样例/025-Agent配置矩阵.md) — 对照 Java 六个 ReAct Agent、轻量调用和 Python 当前角色的模型、工具、状态、写权限及运行限制。
+- [`docs/契约样例/026-模型分工与观测.md`](docs/契约样例/026-模型分工与观测.md) — 对照 Java/Python 模型角色、环境配置、单次调用日志与离线验收边界。
 
 ## docs/架构
 
@@ -125,11 +128,12 @@
 - [`scripts/build_intent_index.py`](scripts/build_intent_index.py) — 从统一运行配置构建或复用版本化意图索引并输出固定句探针。
 - [`scripts/demo_016_017_pipeline.py`](scripts/demo_016_017_pipeline.py) — 用真实规则、Qdrant、模型和内存假子 Agent 演示四层分支与顺序执行。
 - [`scripts/evaluate_018_intents.py`](scripts/evaluate_018_intents.py) — 用真实模型和 Qdrant 逐条评估 018 固定语料并打印预期差异。
-- [`scripts/demo_020_execution_order.py`](scripts/demo_020_execution_order.py) — 用离线模型和内存状态演示新请求顺序、同会话恢复及活跃 Agent 续跑回退。
+- [`scripts/demo_020_execution_order.py`](scripts/demo_020_execution_order.py) — 用离线模型和内存状态演示新请求、同会话恢复及续跑回退，并标出教学断点与前置轮次。
 - [`scripts/demo_021_request_context.py`](scripts/demo_021_request_context.py) — 用本地 Token、假子 Agent 和假工具演示可信身份传递及多步骤追踪。
 - [`scripts/demo_022_async_context.py`](scripts/demo_022_async_context.py) — 用离线双请求与后台任务演示显式身份传递、追踪隔离和空任务上下文。
 - [`scripts/demo_023_master_agent.py`](scripts/demo_023_master_agent.py) — 用离线 HTTP、固定模型和真实 AgentScope Toolkit 演示主 Agent 委派与未注册工具拒绝。
 - [`scripts/demo_024_agent_config.py`](scripts/demo_024_agent_config.py) — 用离线模型演示启动配置、信息工具超时及主 Agent 轮次耗尽。
+- [`scripts/demo_026_model_roles.py`](scripts/demo_026_model_roles.py) — 用固定模型响应演示主/稳定档调用、token 日志和切换模型后的身份仓储不变。
 
 ## output
 
@@ -157,5 +161,6 @@
 - [`tests/test_022_async_context.py`](tests/test_022_async_context.py) — 用双用户交错 HTTP、跨任务 SSE 和后台任务验证身份与追踪上下文隔离及清理。
 - [`tests/test_023_master_agent.py`](tests/test_023_master_agent.py) — 验证 HTTP JSON/SSE 中主 Agent 调用只读信息子 Agent 及未注册工具拒绝。
 - [`tests/test_024_agent_config.py`](tests/test_024_agent_config.py) — 验证启动配置、Agent 轮次/超时、模型重试和错误取消出口。
+- [`tests/test_026_model_roles.py`](tests/test_026_model_roles.py) — 验证主/稳定模型装配、缺失配置、逐次调用日志和身份仓储隔离。
 - [`tests/test_mariadb_integration.py`](tests/test_mariadb_integration.py) — 验证真实 MariaDB 数据库连接、用户密码迁移、会话消息与 agentscope_session 存取。
 - [`tests/test_redis_integration.py`](tests/test_redis_integration.py) — 验证真实 172.22.22.123 Redis 连接、30 天 TTL、跨实例 Token 持久化与平滑降级。

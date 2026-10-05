@@ -6,7 +6,7 @@ from datetime import date
 
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from agentscope.model import DeepSeekChatModel
+from agentscope.model import OpenAIChatModel
 import pytest
 
 from gogo_agent.api import app
@@ -486,7 +486,7 @@ async def test_compatible_v1_gateway_url_keeps_real_chat_model(monkeypatch):
     )
     model = executor._build_model()
     try:
-        assert isinstance(model, DeepSeekChatModel)
+        assert isinstance(model, OpenAIChatModel)
         assert str(model.client.base_url).rstrip("/") == "https://gateway.example.test/v1"
     finally:
         await model.client.close()

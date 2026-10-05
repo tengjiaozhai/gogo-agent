@@ -167,9 +167,9 @@ def test_http_master_calls_registered_read_only_info_agent_and_records_result(
         assert agent.name == "InfoAgent"
         return agent
 
-    def build_model(stream=False):
+    def build_model(stream=False, *, role="master"):
         built.append(stream)
-        return master if len(built) == 1 else child
+        return master if role == "master" else child
 
     monkeypatch.setattr(executor, "_build_model", build_model)
     monkeypatch.setattr(executor, "_build_info_agent", build_info)

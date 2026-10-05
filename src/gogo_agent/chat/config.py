@@ -92,10 +92,12 @@ def load_chat_agent_settings() -> ChatAgentSettings:
 
 
 def require_model_configuration() -> IntentRuntimeSettings:
-    """复用 017 的网关配置，并要求主 Agent 模型名也已填写。"""
+    """复用 017 的网关配置，并要求主/稳定模型名已填写。"""
     settings = load_intent_runtime_settings()
     if not settings.chat_model_name:
         raise ValueError("缺少模型配置：GOGO_MODEL_NAME")
+    if not settings.stable_model_name:
+        raise ValueError("缺少模型配置：GOGO_STABLE_MODEL_NAME")
     return settings
 
 

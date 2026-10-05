@@ -6,10 +6,10 @@ from inspect import isawaitable
 from typing import AsyncContextManager, AsyncGenerator, Callable, Optional
 
 from agentscope.agent import Agent, ModelConfig, ReActConfig
-from agentscope.credential import DeepSeekCredential, OpenAICredential
+from agentscope.credential import OpenAICredential
 from agentscope.event import ReplyFinishedReason, TextBlockDeltaEvent
 from agentscope.message import Msg, TextBlock, UserMsg
-from agentscope.model import ChatResponse, DeepSeekChatModel, OpenAIChatModel
+from agentscope.model import ChatResponse, OpenAIChatModel
 from agentscope.permission import PermissionBehavior, PermissionDecision
 from agentscope.state import AgentState
 from agentscope.tool import FunctionTool, Toolkit
@@ -19,6 +19,7 @@ from pydantic import ValidationError
 from gogo_agent.intent.models import IntentCategory, QueryInput
 from gogo_agent.intent.pipeline import IntentPipelineService, PreparedIntentTurn
 from gogo_agent.intent.runtime import open_intent_pipeline
+from gogo_agent.model import create_chat_model
 from gogo_agent.request_context import RequestContext, current_trace_id, trace_scope
 
 from .continuation import ActiveAgentContinuation, TurnEntry, choose_turn_entry
@@ -113,21 +114,20 @@ class ChatAgentExecutor:
     def session_store(self) -> AgentSessionStoreProtocol:
         return self._session_store
 
-    def _build_model(self, stream: bool = False):
-        """正式模型复用已验证网关配置；离线测试显式注入模型替身。"""
+    def _build_model(self, stream: bool = False, *, role: str = "master"):
+        """正式模型按角色选主/稳定模型；离线测试显式注入替身。"""
         settings = require_model_configuration()
-        return DeepSeekChatModel(
-            credential=DeepSeekCredential(
+        if role not in ("master", "info"):
+            raise ValueError("未知聊天模型角色")
+        return create_chat_model(
+            OpenAICredential(
                 api_key=settings.api_key,
                 base_url=settings.base_url,
             ),
-            model=settings.chat_model_name,
+            settings.chat_model_name if role == "master" else settings.stable_model_name,
+            role=role,
             stream=stream,
-            max_retries=MODEL_MAX_RETRIES,
-            client_kwargs={
-                "max_retries": MODEL_MAX_RETRIES,
-                "timeout": self._settings.model_timeout_seconds,
-            },
+            timeout_seconds=self._settings.model_timeout_seconds,
         )
 
     @staticmethod
@@ -156,7 +156,7 @@ class ChatAgentExecutor:
         return Agent(
             name=self.INFO_AGENT_NAME,
             system_prompt=INFO_SYSTEM_PROMPT,
-            model=self._build_model(stream=False),
+            model=self._build_model(stream=False, role="info"),
             state=AgentState(session_id=self._state_session_id(request.session_id, request.user_id)),
             react_config=ReActConfig(
                 max_iters=self._settings.info_max_iters,

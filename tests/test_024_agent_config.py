@@ -93,7 +93,7 @@ async def test_agent_configures_turn_limits_serial_tool_and_model_timeout(
         master_max_iters=2, info_max_iters=3,
         info_tool_timeout_seconds=0.25, model_timeout_seconds=8,
     )
-    monkeypatch.setattr(executor, "_build_model", lambda stream=False: _FallbackMockModel(stream=stream))
+    monkeypatch.setattr(executor, "_build_model", lambda stream=False, role="master": _FallbackMockModel(stream=stream))
     request = executor._save_user_turn("session-024-config", "u001", "请介绍一处景点")
     prepared = await executor._prepare_turn(request)
     master = executor._build_agent(
@@ -171,9 +171,9 @@ def test_info_timeout_is_reported_without_success_reply(master_http_case, monkey
     child = SlowInfoModel()
     built = []
 
-    def build_model(stream=False):
+    def build_model(stream=False, *, role="master"):
         built.append(stream)
-        return master if len(built) == 1 else child
+        return master if role == "master" else child
 
     monkeypatch.setattr(executor, "_build_model", build_model)
     session_id = f"session-024-timeout-{accept.replace('/', '-')}"
@@ -204,9 +204,9 @@ def test_iteration_limit_is_reported_without_success_reply(master_http_case, mon
     child = FixedInfoModel()
     built = []
 
-    def build_model(stream=False):
+    def build_model(stream=False, *, role="master"):
         built.append(stream)
-        return master if len(built) == 1 else child
+        return master if role == "master" else child
 
     monkeypatch.setattr(executor, "_build_model", build_model)
     session_id = f"session-024-limit-{accept.replace('/', '-')}"

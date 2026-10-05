@@ -7,10 +7,12 @@ import json
 import re
 from typing import Protocol, TypeVar
 
-from agentscope.credential import DeepSeekCredential
+from agentscope.credential import OpenAICredential
 from agentscope.message import SystemMsg, TextBlock, ToolCallBlock, UserMsg
-from agentscope.model import ChatModelBase, ChatResponse, DeepSeekChatModel
+from agentscope.model import ChatModelBase, ChatResponse, OpenAIChatModel
 from pydantic import BaseModel, ValidationError
+
+from gogo_agent.model import create_chat_model
 
 from .models import (
     FastMatch,
@@ -75,17 +77,15 @@ class ModelOutputError(ValueError):
     """单次模型响应不是可接受的结构化结果，不进行文本兜底或修复重试。"""
 
 
-def create_text_model(credential: DeepSeekCredential, model_name: str) -> DeepSeekChatModel:
+def create_text_model(credential: OpenAICredential, model_name: str) -> OpenAIChatModel:
     """创建与项目网关一致的文本模型，关闭 AgentScope 与底层 SDK 的两层重试。"""
-    return DeepSeekChatModel(
-        credential=credential,
-        model=model_name,
-        parameters=DeepSeekChatModel.Parameters(
-            temperature=0, max_tokens=2048, thinking_enable=False
-        ),
+    return create_chat_model(
+        credential,
+        model_name,
+        role="intent",
+        parameters=OpenAIChatModel.Parameters(temperature=0, thinking_enable=False),
         stream=False,
-        max_retries=0,
-        client_kwargs={"max_retries": 0, "timeout": 60},
+        timeout_seconds=60,
     )
 
 
@@ -107,6 +107,7 @@ async def _generate(
         tools=None,
         tool_choice=None,
         response_format={"type": "json_object"},
+        max_tokens=2048,
     )
     if not isinstance(response, ChatResponse) or not response.is_last:
         raise ModelOutputError(f"{result_type.__name__} 必须来自非流式最终响应")

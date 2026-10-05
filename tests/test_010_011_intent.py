@@ -6,7 +6,7 @@ from datetime import date, datetime, timedelta, timezone
 import json
 from pathlib import Path
 
-from agentscope.credential import DeepSeekCredential
+from agentscope.credential import DeepSeekCredential, OpenAICredential
 from agentscope.message import TextBlock, ToolCallBlock
 from agentscope.model import ChatModelBase, ChatResponse
 from fastapi import HTTPException
@@ -168,7 +168,7 @@ async def test_real_sdk_request_shape_and_both_retry_layers(monkeypatch, http_st
         return real_client(**kwargs, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
 
     monkeypatch.setattr(openai, "AsyncClient", client_factory)
-    model = create_text_model(DeepSeekCredential(api_key="local-test-key", base_url="https://example.invalid/v1"), "fixed-model")
+    model = create_text_model(OpenAICredential(api_key="local-test-key", base_url="https://example.invalid/v1"), "fixed-model")
     try:
         assert model.max_retries == model.client.max_retries == 0
         recognizer = IntentRecognizer(model)
@@ -183,7 +183,7 @@ async def test_real_sdk_request_shape_and_both_retry_layers(monkeypatch, http_st
         request = requests[0]
         assert request["stream"] is False
         assert request["temperature"] == 0 and request["max_tokens"] == 2048
-        assert request["thinking"] == {"type": "disabled"}
+        assert "thinking" not in request
         assert "tools" not in request and "tool_choice" not in request
         assert request["response_format"] == {"type": "json_object"}
         # 注入不合格客户端时也必须在网络调用前失败。

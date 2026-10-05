@@ -64,10 +64,10 @@ async def run_turn(case: str) -> None:
     child = InfoModel() if case == "limit" else SlowInfoModel()
     built = 0
 
-    def build_model(stream=False):
+    def build_model(stream=False, *, role="master"):
         nonlocal built
         built += 1
-        return master if built == 1 else child
+        return master if role == "master" else child
 
     executor._build_model = build_model
     session_id = f"demo-024-{case}"

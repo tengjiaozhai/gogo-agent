@@ -7,7 +7,7 @@ from datetime import date
 from pathlib import Path
 from urllib.parse import urlparse
 
-from agentscope.credential import DeepSeekCredential
+from agentscope.credential import OpenAICredential
 from dotenv import load_dotenv
 
 from gogo_agent.chat.repository import InMemoryChatHistoryRepository
@@ -90,7 +90,7 @@ async def main() -> int:
         print(f"配置错误：{exc}")
         return 2
     model = create_text_model(
-        DeepSeekCredential(api_key=api_key, base_url=f"{root}/v1"), model_name
+        OpenAICredential(api_key=api_key, base_url=f"{root}/v1"), model_name
     )
     # 只计数：保留原始 SDK 实现与真实网关请求，不替换模型响应。
     original_call = model._call_api
