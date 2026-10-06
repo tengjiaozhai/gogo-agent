@@ -66,7 +66,7 @@ def load_intent_runtime_settings() -> IntentRuntimeSettings:
         api_key=key,
         base_url=base_url,
         chat_model_name=os.getenv("GOGO_MODEL_NAME", "").strip(),
-        stable_model_name=os.getenv("GOGO_STABLE_MODEL_NAME", "glm-5.2").strip(),
+        stable_model_name=os.getenv("GOGO_STABLE_MODEL_NAME", "deepseek-v4-flash-0731").strip(),
         vector=vector,
     )
 

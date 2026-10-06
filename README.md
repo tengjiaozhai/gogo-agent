@@ -2,6 +2,8 @@
 
 本仓库正在按 [学习路线](docs/学习路线/README.md) 从 Java 版迁移到 AgentScope Python。001 提供最小终端 Agent 和只读日期工具；FastAPI 已接入认证、会话、意图流水线与只读信息子 Agent。024 起正式 API 启动会校验模型配置。
 
+React 前端已提前迁入 [`frontend/`](frontend/README.md)，当前接入登录、会话历史和基础聊天。已迁移范围与后续接口见[前端迁移记录](docs/迁移/前端提前迁移.md)。
+
 ## 环境与启动
 
 安装 [uv](https://docs.astral.sh/uv/) 后，在仓库根目录运行一条命令。`uv run` 会创建 Python 3.12 环境、按 `uv.lock` 安装依赖并启动本地检查：

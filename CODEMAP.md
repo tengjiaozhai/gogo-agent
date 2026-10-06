@@ -9,9 +9,58 @@
 - [`.python-version`](.python-version) — 指定已验证的 Python 3.12.13 运行时。
 - [`pyproject.toml`](pyproject.toml) — 定义 Python 项目元数据、运行时版本要求及依赖配置。
 - [`uv.lock`](uv.lock) — 固定 001 已解析的 Python 依赖版本以供重复安装。
-- [`README.md`](README.md) — 说明安装、终端 Agent、FastAPI 健康检查和测试命令。
+- [`README.md`](README.md) — 说明安装、终端 Agent、FastAPI 健康检查、前端入口和测试命令。
 - [`.env.example`](.env.example) — 列出模型网关、Agent 轮次/超时、意图向量索引及存储连接的环境变量。
 - [`main.py`](main.py) — 根目录便捷入口，供 PyCharm 右键一键运行或调试 API 后台。
+
+## frontend
+
+- [`frontend/.gitignore`](frontend/.gitignore) — 排除前端依赖、构建结果和本地配置。
+- [`frontend/README.md`](frontend/README.md) — 说明提前迁入的前端范围、启动和检查命令。
+- [`frontend/eslint.config.js`](frontend/eslint.config.js) — 配置 React 与 TypeScript 的静态检查规则。
+- [`frontend/index.html`](frontend/index.html) — 提供 React 页面根节点、标题和图标入口。
+- [`frontend/package.json`](frontend/package.json) — 定义前端依赖与开发、构建、Lint 脚本。
+- [`frontend/package-lock.json`](frontend/package-lock.json) — 锁定前端 npm 依赖版本。
+- [`frontend/tsconfig.app.json`](frontend/tsconfig.app.json) — 配置浏览器端 TypeScript 编译检查。
+- [`frontend/tsconfig.json`](frontend/tsconfig.json) — 组织前端 TypeScript 项目引用。
+- [`frontend/tsconfig.node.json`](frontend/tsconfig.node.json) — 配置 Vite 运行配置的 TypeScript 检查。
+- [`frontend/vite.config.ts`](frontend/vite.config.ts) — 启用 React 并将开发期 `/api` 代理到 Python 服务。
+
+## frontend/public
+
+- [`frontend/public/favicon.svg`](frontend/public/favicon.svg) — 提供浏览器标签图标。
+
+## frontend/src
+
+- [`frontend/src/App.css`](frontend/src/App.css) — 定义沿用源项目的登录、侧栏、聊天和消息样式。
+- [`frontend/src/App.tsx`](frontend/src/App.tsx) — 验证已有 token、处理临时验证失败并在登录页与聊天布局间切换。
+- [`frontend/src/index.css`](frontend/src/index.css) — 设置页面基础重置样式。
+- [`frontend/src/main.tsx`](frontend/src/main.tsx) — 挂载 React 应用。
+
+## frontend/src/api
+
+- [`frontend/src/api/auth.ts`](frontend/src/api/auth.ts) — 调用 Python 登录、登出和当前用户接口。
+- [`frontend/src/api/chat.ts`](frontend/src/api/chat.ts) — 调用会话与反馈接口并解析基础聊天 SSE。
+- [`frontend/src/api/config.ts`](frontend/src/api/config.ts) — 选择同源或显式配置的 API 地址。
+
+## frontend/src/components
+
+- [`frontend/src/components/AgentMessageBlock.tsx`](frontend/src/components/AgentMessageBlock.tsx) — 渲染 Markdown 回复、反馈与后续丰富事件的消息区。
+- [`frontend/src/components/BookingResultCard.tsx`](frontend/src/components/BookingResultCard.tsx) — 定义后续预订结果卡片展示。
+- [`frontend/src/components/ChatWindow.tsx`](frontend/src/components/ChatWindow.tsx) — 渲染会话历史、基础 SSE 回复与反馈，并在离开页面时终止旧流。
+- [`frontend/src/components/LoginPage.tsx`](frontend/src/components/LoginPage.tsx) — 登录并加载服务端用户身份。
+- [`frontend/src/components/ProgressCard.tsx`](frontend/src/components/ProgressCard.tsx) — 定义后续 Agent 规划步骤的卡片展示。
+- [`frontend/src/components/Sidebar.tsx`](frontend/src/components/Sidebar.tsx) — 展示当前聊天入口、会话列表和退出登录。
+- [`frontend/src/components/TravelResultCard.tsx`](frontend/src/components/TravelResultCard.tsx) — 定义后续旅行搜索结果卡片展示。
+
+## frontend/src/store
+
+- [`frontend/src/store/authStore.ts`](frontend/src/store/authStore.ts) — 保存登录 token 和用户摘要，并在账号切换时清空聊天内存。
+- [`frontend/src/store/chatStore.ts`](frontend/src/store/chatStore.ts) — 管理当前会话、消息、反馈和流式渲染状态。
+
+## frontend/src/types
+
+- [`frontend/src/types/index.ts`](frontend/src/types/index.ts) — 定义聊天消息和后续丰富事件卡片的数据类型。
 
 ## src/gogo_agent
 
@@ -114,6 +163,10 @@
 
 - [`docs/research/agentscope-2.0.8-context-evaluation.md`](docs/research/agentscope-2.0.8-context-evaluation.md) — 对照 AgentScope Python 2.0.8 与项目的身份传递、改写历史和 Agent 状态管理边界。
 - [`docs/research/python-3.14-compatibility-assessment.md`](docs/research/python-3.14-compatibility-assessment.md) — 评估 Python 3.14 稳定性及对阶段 A 至阶段 I 实施的潜在兼容性影响。
+
+## docs/迁移
+
+- [`docs/迁移/前端提前迁移.md`](docs/迁移/前端提前迁移.md) — 记录原 React 前端已接入的 Python HTTP/SSE 能力及后续页面的恢复条件。
 
 ## exercises
 
