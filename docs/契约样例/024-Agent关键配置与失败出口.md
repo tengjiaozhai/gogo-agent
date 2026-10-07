@@ -25,7 +25,7 @@
 | 主 Agent 达到最大推理轮次 | JSON 503 / SSE `event: error` | 不保存成功助手回复或新 AgentState |
 | 请求在 Agent 推理中取消 | 取消向上传播；SSE 无完成事件 | 关闭模型客户端，不保存成功助手回复或新 AgentState |
 
-AgentScope 2.0.8 到达 `max_iters` 后可能再做一次强制最终回答调用；因此 `max_iters=1` 的固定模型测试会观察到两次模型调用。应用检查最终消息的 `finished_reason=exceed_max_iters`，不把兜底文本当作完成。当前 `GoGo` 的 AgentState 继续按可信用户/会话键持久化，`InfoAgent` 每次工具调用新建状态并在返回后释放模型；跨轮子 Agent 记忆尚未启用。
+AgentScope 2.0.8 到达 `max_iters` 后可能再做一次强制最终回答调用；因此 `max_iters=1` 的固定模型测试会观察到两次模型调用。应用检查最终消息的 `finished_reason=exceed_max_iters`，不把兜底文本当作完成。`GoGo` 的 AgentState 按可信用户/会话键持久化；027 起 `InfoAgent` 也按同一可信键独立恢复和保存状态，成功委派后可成为活跃续聊目标。模型客户端仍在每次调用结束时释放，见[027 指南](027-活跃InfoAgent续跑.md)。
 
 ## 可运行验收
 

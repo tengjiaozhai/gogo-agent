@@ -3,8 +3,18 @@
 from datetime import datetime, timezone
 from typing import Optional, Protocol
 from agentscope.state import AgentState
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from .models import ChatConversation, ChatMessage
+
+
+class ActiveAgentRecord(BaseModel):
+    """已鉴权用户会话中的活跃子 Agent 及其续聊有效期。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    agent_name: str = Field(..., min_length=1, description="可以直接续聊的已注册子 Agent 名称")
+    expires_at: AwareDatetime = Field(..., description="该活跃记录失效的 UTC 时间")
 
 
 class ChatHistoryRepositoryProtocol(Protocol):
@@ -33,6 +43,9 @@ class AgentSessionStoreProtocol(Protocol):
     def load_agent_state(self, session_id: str, agent_name: str = "GoGo") -> Optional[AgentState]: ...
     def save_agent_state(self, session_id: str, state: AgentState, agent_name: str = "GoGo") -> None: ...
     def delete_agent_state(self, session_id: str, agent_name: str = "GoGo") -> None: ...
+    def load_active_agent(self, session_id: str) -> Optional[ActiveAgentRecord]: ...
+    def save_active_agent(self, session_id: str, record: ActiveAgentRecord) -> None: ...
+    def delete_active_agent(self, session_id: str) -> None: ...
 
 
 # ===================== In-Memory Implementations =====================
@@ -60,6 +73,9 @@ class InMemoryChatHistoryRepository:
         return None
 
     def save_conversation(self, conversation: ChatConversation) -> None:
+        existing = self._conversations.get(conversation.conversation_id)
+        if existing is not None and existing.user_id != conversation.user_id:
+            raise PermissionError("会话归属不匹配")
         self._conversations[conversation.conversation_id] = conversation
 
     def update_title(self, conversation_id: str, title: str) -> bool:
@@ -128,6 +144,7 @@ class InMemoryAgentSessionStore:
 
     def __init__(self):
         self._states: dict[str, str] = {}
+        self._active_agents: dict[str, str] = {}
 
     def _make_key(self, session_id: str, agent_name: str) -> str:
         return f"{session_id}:{agent_name}"
@@ -145,6 +162,16 @@ class InMemoryAgentSessionStore:
 
     def delete_agent_state(self, session_id: str, agent_name: str = "GoGo") -> None:
         self._states.pop(self._make_key(session_id, agent_name), None)
+
+    def load_active_agent(self, session_id: str) -> Optional[ActiveAgentRecord]:
+        data = self._active_agents.get(session_id)
+        return ActiveAgentRecord.model_validate_json(data) if data is not None else None
+
+    def save_active_agent(self, session_id: str, record: ActiveAgentRecord) -> None:
+        self._active_agents[session_id] = record.model_dump_json()
+
+    def delete_active_agent(self, session_id: str) -> None:
+        self._active_agents.pop(session_id, None)
 
 
 # ===================== SQL Implementations (SQLAlchemy / MariaDB) =====================
@@ -230,6 +257,10 @@ class SQLChatHistoryRepository:
             row = session.scalar(stmt)
             now = datetime.now(timezone.utc)
             if row:
+                if row.user_id != conversation.user_id:
+                    raise PermissionError("会话归属不匹配")
+                if row.deleted != 0:
+                    row.created_at = conversation.created_at
                 row.title = conversation.title
                 row.updated_at = now
                 row.deleted = conversation.deleted
@@ -479,6 +510,62 @@ class SQLAgentSessionStore:
         with self._session_factory() as session:
             session.execute(delete(AgentScopeSessionModel).where(
                 AgentScopeSessionModel.session_id == key,
+            ))
+            session.commit()
+
+    def load_active_agent(self, session_id: str) -> Optional[ActiveAgentRecord]:
+        if not self._session_factory:
+            return None
+        from sqlalchemy import select
+        from gogo_agent.db.models import AgentScopeSessionModel
+
+        with self._session_factory() as session:
+            row = session.scalar(select(AgentScopeSessionModel).where(
+                AgentScopeSessionModel.session_id == self._make_key(session_id, "router"),
+                AgentScopeSessionModel.state_key == "active_agent",
+                AgentScopeSessionModel.item_index == 0,
+            ))
+            return ActiveAgentRecord.model_validate_json(row.state_data) if row is not None else None
+
+    def save_active_agent(self, session_id: str, record: ActiveAgentRecord) -> None:
+        if not self._session_factory:
+            return
+        from sqlalchemy import select
+        from gogo_agent.db.models import AgentScopeSessionModel
+
+        key = self._make_key(session_id, "router")
+        with self._session_factory() as session:
+            row = session.scalar(select(AgentScopeSessionModel).where(
+                AgentScopeSessionModel.session_id == key,
+                AgentScopeSessionModel.state_key == "active_agent",
+                AgentScopeSessionModel.item_index == 0,
+            ))
+            now = datetime.now(timezone.utc)
+            if row is None:
+                row = AgentScopeSessionModel(
+                    session_id=key,
+                    state_key="active_agent",
+                    item_index=0,
+                    state_data=record.model_dump_json(),
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(row)
+            else:
+                row.state_data = record.model_dump_json()
+                row.updated_at = now
+            session.commit()
+
+    def delete_active_agent(self, session_id: str) -> None:
+        if not self._session_factory:
+            return
+        from sqlalchemy import delete
+        from gogo_agent.db.models import AgentScopeSessionModel
+
+        with self._session_factory() as session:
+            session.execute(delete(AgentScopeSessionModel).where(
+                AgentScopeSessionModel.session_id == self._make_key(session_id, "router"),
+                AgentScopeSessionModel.state_key == "active_agent",
             ))
             session.commit()
 

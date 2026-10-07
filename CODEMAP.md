@@ -85,11 +85,11 @@
 
 - [`src/gogo_agent/chat/__init__.py`](src/gogo_agent/chat/__init__.py) — 导出会话消息服务、执行器与路由入口。
 - [`src/gogo_agent/chat/config.py`](src/gogo_agent/chat/config.py) — 集中主/信息 Agent 提示词、轮次、模型与只读工具超时配置及启动校验。
-- [`src/gogo_agent/chat/continuation.py`](src/gogo_agent/chat/continuation.py) — 定义接收可信请求上下文的活跃 Agent 续跑接口，并判定完整信号或无效记录的入口。
+- [`src/gogo_agent/chat/continuation.py`](src/gogo_agent/chat/continuation.py) — 用可信请求和精确续聊词恢复活跃 InfoAgent，处理过期与无效状态回退。
 - [`src/gogo_agent/chat/models.py`](src/gogo_agent/chat/models.py) — 定义会话、消息领域模型及请求响应视图 DTO。
-- [`src/gogo_agent/chat/repository.py`](src/gogo_agent/chat/repository.py) — 实现内存与 SQL 的业务历史限量查询、AgentState 保存读取及删除。
-- [`src/gogo_agent/chat/service.py`](src/gogo_agent/chat/service.py) — 编排会话创建、鉴权后的全量或最近历史读取、标题提取及反馈。
-- [`src/gogo_agent/chat/executor.py`](src/gogo_agent/chat/executor.py) — 按可信请求和集中配置运行主/信息 Agent，处理 JSON/SSE 成功与失败出口并保存状态和工具记录。
+- [`src/gogo_agent/chat/repository.py`](src/gogo_agent/chat/repository.py) — 实现内存与 SQL 的业务历史、AgentState 与活跃路由记录存取，并处理已删除会话 ID 的重新归属。
+- [`src/gogo_agent/chat/service.py`](src/gogo_agent/chat/service.py) — 编排会话创建、归属校验后的历史读取和用户消息保存、标题及反馈。
+- [`src/gogo_agent/chat/executor.py`](src/gogo_agent/chat/executor.py) — 按可信请求运行主/信息 Agent 与活跃续聊，处理 JSON/SSE 出口并保存状态和工具记录。
 - [`src/gogo_agent/chat/dependencies.py`](src/gogo_agent/chat/dependencies.py) — 提供会话仓储、L2 记忆库与执行器的 FastAPI 依赖注入。
 - [`src/gogo_agent/chat/router.py`](src/gogo_agent/chat/router.py) — 定义 /api/chat 的会话接口，并在 SSE 建立前完成对话预处理。
 
@@ -137,6 +137,8 @@
 - [`docs/契约样例/024-Agent关键配置与失败出口.md`](docs/契约样例/024-Agent关键配置与失败出口.md) — 对照主/信息 Agent 的配置来源、Java 差异、失败出口与运行验收。
 - [`docs/契约样例/025-Agent配置矩阵.md`](docs/契约样例/025-Agent配置矩阵.md) — 对照 Java 六个 ReAct Agent、轻量调用和 Python 当前角色的模型、工具、状态、写权限及运行限制。
 - [`docs/契约样例/026-模型分工与观测.md`](docs/契约样例/026-模型分工与观测.md) — 对照 Java/Python 模型角色、环境配置、单次调用日志与离线验收边界。
+- [`docs/契约样例/027-活跃InfoAgent续跑.md`](docs/契约样例/027-活跃InfoAgent续跑.md) — 对照 Java/Python 活跃路由语义，提供 InfoAgent 续聊的逐步调试和验收指南。
+- [`docs/契约样例/028-可信身份与会话归属.md`](docs/契约样例/028-可信身份与会话归属.md) — 说明模型工具参数、认证上下文和 SQL 会话归属的信任边界与负例。
 
 ## docs/架构
 
@@ -187,11 +189,14 @@
 - [`scripts/demo_023_master_agent.py`](scripts/demo_023_master_agent.py) — 用离线 HTTP、固定模型和真实 AgentScope Toolkit 演示主 Agent 委派与未注册工具拒绝。
 - [`scripts/demo_024_agent_config.py`](scripts/demo_024_agent_config.py) — 用离线模型演示启动配置、信息工具超时及主 Agent 轮次耗尽。
 - [`scripts/demo_026_model_roles.py`](scripts/demo_026_model_roles.py) — 用固定模型响应演示主/稳定档调用、token 日志和切换模型后的身份仓储不变。
+- [`scripts/demo_027_active_info.py`](scripts/demo_027_active_info.py) — 用离线 HTTP 演示真实 InfoAgent 活跃记录、精确续聊、回退和跨用户拒绝。
+- [`scripts/demo_028_trusted_identity.py`](scripts/demo_028_trusted_identity.py) — 用固定工具调用和 SQLite 演示伪造身份拒绝与删除会话复用后的归属。
 
 ## output
 
 - [`output/l0_l1_intent_routing.html`](output/l0_l1_intent_routing.html) — 提供 L0/L1 意图路由和规则否决条件的独立交互图解。
 - [`output/show_me_023_execution_flow.html`](output/show_me_023_execution_flow.html) — 提供 023 从 HTTP 请求到 MasterModel._call_api 调用链路与 Java 工程化映射图解。
+- [`output/show_me_fastapi_depends_quiz.html`](output/show_me_fastapi_depends_quiz.html) — 提供 FastAPI Depends 核心机制、DAG 拓扑求解与 Java 对照的通关测评交互页面。
 
 ## tests
 
@@ -215,5 +220,7 @@
 - [`tests/test_023_master_agent.py`](tests/test_023_master_agent.py) — 验证 HTTP JSON/SSE 中主 Agent 调用只读信息子 Agent 及未注册工具拒绝。
 - [`tests/test_024_agent_config.py`](tests/test_024_agent_config.py) — 验证启动配置、Agent 轮次/超时、模型重试和错误取消出口。
 - [`tests/test_026_model_roles.py`](tests/test_026_model_roles.py) — 验证主/稳定模型装配、缺失配置、逐次调用日志和身份仓储隔离。
+- [`tests/test_027_active_info.py`](tests/test_027_active_info.py) — 验证真实 InfoAgent 的 JSON/SSE 续聊、过期回退、跨用户隔离及 SQLite 活跃记录。
+- [`tests/test_028_identity_boundary.py`](tests/test_028_identity_boundary.py) — 验证模型伪造工具身份无效和 SQL 已删除会话重新归属的隔离。
 - [`tests/test_mariadb_integration.py`](tests/test_mariadb_integration.py) — 验证真实 MariaDB 数据库连接、用户密码迁移、会话消息与 agentscope_session 存取。
 - [`tests/test_redis_integration.py`](tests/test_redis_integration.py) — 验证真实 172.22.22.123 Redis 连接、30 天 TTL、跨实例 Token 持久化与平滑降级。

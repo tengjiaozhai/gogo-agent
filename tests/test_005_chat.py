@@ -405,8 +405,8 @@ def test_soft_delete_conversation(test_users):
     assert msgs_resp.status_code == 404
 
 
-def test_deleted_session_id_reused_by_other_user_has_no_old_agent_state(test_users):
-    """删除后同名 ID 可被别人复用，但不能带入旧用户的模型上下文。"""
+def test_deleted_session_id_cannot_be_reused_by_other_user(test_users):
+    """删除后会话 ID 仍归原用户，不能让别人写入或继承模型上下文。"""
     client = TestClient(app)
     session_id = "reused_session_005"
     alice = {"Authorization": test_users["alice_token"], "Accept": "application/json"}
@@ -419,12 +419,11 @@ def test_deleted_session_id_reused_by_other_user_has_no_old_agent_state(test_use
     assert client.delete(f"/api/chat/{session_id}", headers=alice).status_code == 200
     assert store.load_agent_state(alice_key, agent_name="GoGo") is None
 
-    assert client.post(f"/api/chat/{session_id}", headers=bob, json={"message": "我是 Bob"}).status_code == 200
+    assert client.post(f"/api/chat/{session_id}", headers=bob, json={"message": "我是 Bob"}).status_code == 403
     bob_key = executor._state_session_id(session_id, "u002")
-    state = store.load_agent_state(bob_key, agent_name="GoGo")
-    assert state is not None
-    assert len(state.context) == 2
-    assert state.context[0].get_text_content() == "我是 Bob"
+    assert store.load_agent_state(bob_key, agent_name="GoGo") is None
+    assert client.post(f"/api/chat/{session_id}", headers=alice, json={"message": "Alice 再次使用"}).status_code == 200
+    assert [msg.content for msg in test_users["chat_service"].list_messages(session_id, "u001") if msg.role == "user"] == ["Alice 再次使用"]
 
 
 def test_sql_agentscope_session_persistence_when_database_available():

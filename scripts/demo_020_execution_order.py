@@ -67,6 +67,7 @@ from agentscope.message import TextBlock
 from agentscope.model import ChatModelBase, ChatResponse
 
 from gogo_agent.chat.executor import ChatAgentExecutor, _FallbackMockModel
+from gogo_agent.chat.continuation import ContinuationReply
 from gogo_agent.chat.repository import InMemoryAgentSessionStore, InMemoryChatHistoryRepository
 from gogo_agent.chat.service import ChatHistoryService
 from gogo_agent.intent import (
@@ -188,10 +189,10 @@ class OfflineExecutor(ChatAgentExecutor):
     def _build_model(self, stream=False):
         return _FallbackMockModel(stream=stream)
 
-    def _build_agent(self, state, prepared, request, tool_calls, stream=False):
+    def _build_agent(self, state, prepared, request, tool_calls, stream=False, info_states=None):
         self.events.append("coordinator_built")
         self.events.append(f"state_context_messages={len(state.context)}")
-        agent = super()._build_agent(state, prepared, request, tool_calls, stream=stream)
+        agent = super()._build_agent(state, prepared, request, tool_calls, stream=stream, info_states=info_states)
         reply = agent.reply
 
         async def record_reply(*args, **kwargs):
@@ -203,7 +204,7 @@ class OfflineExecutor(ChatAgentExecutor):
 
 
 class FakeActiveAgent:
-    """027 尚未装配真实活跃 Agent，本演示只注入接口替身。"""
+    """020 的 PlanAgent 教学替身；生产 027 只注册 InfoAgent。"""
 
     available_agents = frozenset({"PlanAgent"})
 
@@ -215,9 +216,15 @@ class FakeActiveAgent:
         self.events.append("active_lookup")
         return self.active_name
 
+    def clear_active(self, request):
+        pass
+
+    def record_completed_agent(self, request, agent_name):
+        pass
+
     async def continue_turn(self, request, agent_name, query):
         self.events.append("active_agent_replied")
-        return f"{agent_name} 已继续处理：{query.question}"
+        return ContinuationReply(f"{agent_name} 已继续处理：{query.question}")
 
 
 def show(label: str, events: list[str], history: ChatHistoryService) -> None:

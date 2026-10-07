@@ -10,7 +10,7 @@ import pytest
 from gogo_agent.api import app
 from gogo_agent.auth.dependencies import get_current_user
 from gogo_agent.auth.models import UserAccount
-from gogo_agent.chat.continuation import TurnEntry, choose_turn_entry
+from gogo_agent.chat.continuation import ContinuationReply, TurnEntry, choose_turn_entry
 from gogo_agent.chat.dependencies import get_chat_executor, get_chat_history_service
 from gogo_agent.chat.executor import ChatAgentExecutor, _FallbackMockModel
 from gogo_agent.chat.repository import InMemoryAgentSessionStore, InMemoryChatHistoryRepository
@@ -113,10 +113,10 @@ def recorded_executor(monkeypatch, events, *, active_continuation=None):
     monkeypatch.setattr(executor, "_build_model", lambda stream=False: _FallbackMockModel(stream=stream))
     original_build = executor._build_agent
 
-    def build_agent(state, prepared, request, tool_calls, stream=False):
+    def build_agent(state, prepared, request, tool_calls, stream=False, info_states=None):
         events.append("coordinator_built")
         loaded_context_sizes.append(len(state.context))
-        agent = original_build(state, prepared, request, tool_calls, stream=stream)
+        agent = original_build(state, prepared, request, tool_calls, stream=stream, info_states=info_states)
         original_reply = agent.reply
 
         async def reply(*args, **kwargs):
@@ -293,7 +293,7 @@ async def test_active_continuation_cannot_bypass_session_ownership(monkeypatch):
 
 
 class FakeActiveContinuation:
-    """只注入测试；027 才提供真实活跃 Agent 状态和业务执行者。"""
+    """只注入 020 测试；生产 027 只注册 InfoAgent。"""
 
     available_agents = frozenset({"PlanAgent"})
 
@@ -311,10 +311,16 @@ class FakeActiveContinuation:
             raise RuntimeError("active store unavailable")
         return self.active_name
 
+    def clear_active(self, request):
+        pass
+
+    def record_completed_agent(self, request, agent_name):
+        pass
+
     async def continue_turn(self, request, agent_name, query):
         self.events.append("active_agent_replied")
         self.calls.append((request, agent_name, query.question))
-        return f"{agent_name} 已继续处理"
+        return ContinuationReply(f"{agent_name} 已继续处理")
 
 
 @pytest.mark.parametrize("accept", ("application/json", "text/event-stream"))

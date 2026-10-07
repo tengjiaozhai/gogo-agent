@@ -104,7 +104,13 @@ class ChatHistoryService:
                 created_at=now,
                 updated_at=now,
             )
-            self._repo.save_conversation(conv)
+            try:
+                self._repo.save_conversation(conv)
+            except PermissionError:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权访问该会话") from None
+            persisted = self._repo.find_conversation_by_id(conversation_id)
+            if persisted is None or persisted.user_id != user_id:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权访问该会话")
         elif conv.user_id != user_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

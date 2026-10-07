@@ -192,6 +192,10 @@ def test_info_timeout_is_reported_without_success_reply(master_http_case, monkey
     assert executor.session_store.load_agent_state(
         executor._state_session_id(session_id, "u001"), agent_name="GoGo",
     ) is None
+    assert executor.session_store.load_agent_state(
+        executor._state_session_id(session_id, "u001"), agent_name="InfoAgent",
+    ) is None
+    assert executor.session_store.load_active_agent(executor._state_session_id(session_id, "u001")) is None
     assert child.client.is_closed() and master.client.is_closed()
 
 
@@ -226,6 +230,10 @@ def test_iteration_limit_is_reported_without_success_reply(master_http_case, mon
     assert executor.session_store.load_agent_state(
         executor._state_session_id(session_id, "u001"), agent_name="GoGo",
     ) is None
+    assert executor.session_store.load_agent_state(
+        executor._state_session_id(session_id, "u001"), agent_name="InfoAgent",
+    ) is None
+    assert executor.session_store.load_active_agent(executor._state_session_id(session_id, "u001")) is None
 
 
 @pytest.mark.asyncio
