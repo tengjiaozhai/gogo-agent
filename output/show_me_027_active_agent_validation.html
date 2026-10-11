@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>027 核心机制图解：ActiveAgent 三重校验门禁与惰性淘汰清理</title>
+  <style>
+    :root {
+      --bg: #0b1120;
+      --card-bg: #151f32;
+      --card-border: #24344d;
+      --card-hover: #1e2d47;
+      --primary: #38bdf8;
+      --success: #34d399;
+      --danger: #f43f5e;
+      --warning: #fbbf24;
+      --purple: #a855f7;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --code-bg: #0d1526;
+      --tag-bg: rgba(56, 189, 248, 0.12);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--text-main);
+      line-height: 1.6;
+      padding: 2.5rem 1.25rem;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 2.5rem;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.4rem 1.1rem;
+      border-radius: 9999px;
+      font-size: 0.85rem;
+      font-weight: 700;
+      background: var(--tag-bg);
+      color: var(--primary);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      margin-bottom: 1rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    h1 {
+      font-size: 2.2rem;
+      font-weight: 800;
+      background: linear-gradient(135deg, #38bdf8 0%, #818cf8 50%, #c084fc 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 0.75rem;
+    }
+
+    .lead {
+      color: var(--text-muted);
+      font-size: 1.05rem;
+      max-width: 860px;
+      margin: 0 auto;
+    }
+
+    .code-hero {
+      background: var(--code-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 1.25rem 1.5rem;
+      margin-bottom: 2.5rem;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4);
+      position: relative;
+    }
+
+    .code-hero-title {
+      font-size: 0.85rem;
+      color: var(--primary);
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .code-hero pre {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.95rem;
+      line-height: 1.6;
+      color: #e2e8f0;
+      overflow-x: auto;
+    }
+
+    .kw { color: #f43f5e; font-weight: 600; }
+    .fn { color: #38bdf8; }
+    .var { color: #fbbf24; }
+    .str { color: #34d399; }
+    .cm { color: #64748b; font-style: italic; }
+
+    /* Summary Matrix */
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 1.5rem;
+      margin-bottom: 2.5rem;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 1.5rem;
+      transition: transform 0.2s ease, border-color 0.2s ease;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .card:hover {
+      transform: translateY(-3px);
+      border-color: #38bdf8;
+    }
+
+    .card-num {
+      position: absolute;
+      top: -10px;
+      right: 15px;
+      font-size: 3.5rem;
+      font-weight: 900;
+      color: rgba(255, 255, 255, 0.03);
+      user-select: none;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+    }
+
+    .pill {
+      display: inline-block;
+      padding: 0.25rem 0.6rem;
+      border-radius: 6px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+    }
+    .pill-cyan { background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); }
+    .pill-yellow { background: rgba(251, 191, 36, 0.15); color: #fbbf24; border: 1px solid rgba(251, 191, 36, 0.3); }
+    .pill-purple { background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.3); }
+
+    .card-title {
+      font-size: 1.15rem;
+      font-weight: 700;
+      color: var(--text-main);
+    }
+
+    .card-body p {
+      font-size: 0.92rem;
+      color: #cbd5e1;
+      margin-bottom: 0.75rem;
+    }
+
+    .card-code {
+      background: var(--code-bg);
+      border-radius: 6px;
+      padding: 0.6rem 0.8rem;
+      font-family: monospace;
+      font-size: 0.82rem;
+      color: #38bdf8;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      margin-bottom: 0.85rem;
+      word-break: break-all;
+    }
+
+    .card-footer-box {
+      background: rgba(15, 23, 42, 0.6);
+      border-radius: 8px;
+      padding: 0.75rem;
+      font-size: 0.85rem;
+      border-left: 3px solid #38bdf8;
+    }
+    .border-yellow { border-left-color: var(--warning); }
+    .border-purple { border-left-color: var(--purple); }
+
+    /* Flow Section */
+    .flow-section {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 2rem;
+      margin-bottom: 2.5rem;
+    }
+
+    .section-title {
+      font-size: 1.35rem;
+      font-weight: 700;
+      margin-bottom: 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      color: #f8fafc;
+    }
+
+    .flow-diagram {
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+      position: relative;
+    }
+
+    .flow-step {
+      display: flex;
+      align-items: flex-start;
+      gap: 1.25rem;
+      background: #0d1526;
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 1.25rem;
+    }
+
+    .flow-step-icon {
+      width: 42px;
+      height: 42px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 1.1rem;
+      flex-shrink: 0;
+    }
+    .icon-input { background: rgba(56, 189, 248, 0.2); color: #38bdf8; border: 1px solid #38bdf8; }
+    .icon-check { background: rgba(251, 191, 36, 0.2); color: #fbbf24; border: 1px solid #fbbf24; }
+    .icon-fail { background: rgba(244, 63, 94, 0.2); color: #f43f5e; border: 1px solid #f43f5e; }
+    .icon-pass { background: rgba(52, 211, 153, 0.2); color: #34d399; border: 1px solid #34d399; }
+
+    .flow-step-content {
+      flex: 1;
+    }
+
+    .flow-step-title {
+      font-weight: 700;
+      font-size: 1.05rem;
+      margin-bottom: 0.35rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .flow-step-desc {
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+
+    /* Comparison Table */
+    .compare-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 1rem;
+      font-size: 0.9rem;
+    }
+
+    .compare-table th {
+      background: #0d1526;
+      text-align: left;
+      padding: 0.85rem 1rem;
+      color: var(--primary);
+      border: 1px solid var(--card-border);
+      font-weight: 600;
+    }
+
+    .compare-table td {
+      padding: 0.85rem 1rem;
+      border: 1px solid var(--card-border);
+      color: #cbd5e1;
+    }
+
+    .compare-table tr:nth-child(even) {
+      background: rgba(13, 21, 38, 0.4);
+    }
+
+    .badge-code {
+      font-family: monospace;
+      padding: 0.2rem 0.4rem;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 4px;
+      color: #38bdf8;
+    }
+
+    .highlight-box {
+      margin-top: 1.5rem;
+      padding: 1.25rem;
+      border-radius: 10px;
+      background: rgba(244, 63, 94, 0.08);
+      border: 1px solid rgba(244, 63, 94, 0.3);
+      color: #fecdd3;
+    }
+
+    .highlight-box strong {
+      color: #fb7185;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="badge">GoGo Agent · 027 核心源码透析</div>
+      <h1>ActiveAgent 三重校验门禁与惰性淘汰机制</h1>
+      <p class="lead">解析 <code>get_active_agent</code> 为什么要在读取活跃票据时进行三道条件校验，以及为什么任何一条不满足就要立即执行物理清理。</p>
+    </header>
+
+    <!-- Code Block -->
+    <div class="code-hero">
+      <div class="code-hero-title">
+        <span>📍 src/gogo_agent/chat/continuation.py: Lines 114–120</span>
+        <span style="color: var(--text-muted);">def get_active_agent(self, request: RequestContext) -> str | None</span>
+      </div>
+      <pre><code><span class="kw">if</span> (
+    <span class="var">record</span>.agent_name <span class="kw">not in</span> <span class="var">self</span>.available_agents              <span class="cm"># ① 门禁一：身份白名单校验（防止僵尸/未注册 Agent）</span>
+    <span class="kw">or</span> <span class="var">record</span>.expires_at &lt;= <span class="fn">datetime</span>.<span class="fn">now</span>(<span class="var">timezone</span>.utc)           <span class="cm"># ② 门禁二：时效性 TTL 校验（MySQL 缺乏原生到期淘汰）</span>
+    <span class="kw">or</span> <span class="var">self</span>._session_store.<span class="fn">load_agent_state</span>(key, agent_name=<span class="var">record</span>.agent_name) <span class="kw">is None</span>  <span class="cm"># ③ 门禁三：记忆状态完整性校验（防止孤儿票据）</span>
+):
+    <span class="var">self</span>._session_store.<span class="fn">delete_active_agent</span>(key)                 <span class="cm"># 💥 触发动作：惰性驱逐（Lazy Eviction）物理删除 MySQL 记录</span>
+    <span class="kw">return None</span>                                                  <span class="cm"># 🔄 安全降级：平滑回退到意图识别与 Master 流水线</span></code></pre>
+    </div>
+
+    <!-- 3 Cards -->
+    <div class="summary-grid">
+      <!-- Card 1 -->
+      <div class="card">
+        <span class="card-num">01</span>
+        <div class="card-header">
+          <span class="pill pill-cyan">门禁一 · 合法性</span>
+          <h3 class="card-title">白名单/注册校验</h3>
+        </div>
+        <div class="card-code">record.agent_name not in self.available_agents</div>
+        <div class="card-body">
+          <p><strong>解决痛点：</strong>系统迭代时下线了旧 Agent，或者数据库残留了历史实验性 Agent 的脏名称。</p>
+          <p><strong>为何关键：</strong>如果直接唤醒一个代码里已经不存在或未注册的 Agent，后续会触发 <code>KeyError</code> 或对象未初始化崩溃。</p>
+        </div>
+        <div class="card-footer-box">
+          <strong>当前白名单：</strong><code>frozenset({"InfoAgent"})</code>。只有显式注册的合法子 Agent 才有资格被快速续跑唤醒。
+        </div>
+      </div>
+
+      <!-- Card 2 -->
+      <div class="card">
+        <span class="card-num">02</span>
+        <div class="card-header">
+          <span class="pill pill-yellow">门禁二 · 时效性</span>
+          <h3 class="card-title">逻辑 TTL 过期校验</h3>
+        </div>
+        <div class="card-code">record.expires_at &lt;= datetime.now(timezone.utc)</div>
+        <div class="card-body">
+          <p><strong>解决痛点：</strong>活跃票据存储在 <strong>MySQL</strong> 中，MySQL 原生不像 Redis 那样具备 Key 自动到期消失（Expire）的能力。</p>
+          <p><strong>为何关键：</strong>如果用户昨天问完天气，今天发送“好的”，若无 TTL 校验，系统会误把新话题强塞给昨天的子 Agent，造成严重答非所问。</p>
+        </div>
+        <div class="card-footer-box border-yellow">
+          <strong>有效期窗口：</strong>默认 30 分钟。超过 30 分钟未交互，该票据自动失效，必须重新走全量意图规划。
+        </div>
+      </div>
+
+      <!-- Card 3 -->
+      <div class="card">
+        <span class="card-num">03</span>
+        <div class="card-header">
+          <span class="pill pill-purple">门禁三 · 完整性</span>
+          <h3 class="card-title">孤儿票据/记忆探测</h3>
+        </div>
+        <div class="card-code">load_agent_state(key, agent_name) is None</div>
+        <div class="card-body">
+          <p><strong>解决痛点：</strong>“票据（路标）”与“记忆（AgentState）”是两张独立的记录。路标在，不代表记忆还在。</p>
+          <p><strong>为何关键：</strong>如果内存/持久化中的上下文被单方面清除，只剩下一张空头门票，贸然直连会直接抛出 <code>ValueError("活跃 Agent 状态已丢失")</code> 致命异常。</p>
+        </div>
+        <div class="card-footer-box border-purple">
+          <strong>前置防御：</strong>必须保证“门票有效”且“上下文记忆完好”，才允许放行走直连通路。
+        </div>
+      </div>
+    </div>
+
+    <!-- Execution Flow -->
+    <div class="flow-section">
+      <h2 class="section-title">
+        <span>⚙️</span> 执行链路与分支走向（Fail-Safe 决策树）
+      </h2>
+      <div class="flow-diagram">
+        <div class="flow-step">
+          <div class="flow-step-icon icon-input">📥</div>
+          <div class="flow-step-content">
+            <div class="flow-step-title">用户发送新消息 (Turn N)</div>
+            <div class="flow-step-desc">
+              系统根据 <code>RequestContext</code> 生成 Session Key（如 <code>5:u_001:session_123:router</code>），尝试从 MySQL 读取 <code>ActiveAgentRecord</code>。
+            </div>
+          </div>
+        </div>
+
+        <div class="flow-step">
+          <div class="flow-step-icon icon-check">🔍</div>
+          <div class="flow-step-content">
+            <div class="flow-step-title">三重门禁原子化检验</div>
+            <div class="flow-step-desc">
+              依次核对：<strong>① 名字是否在 available_agents？</strong> 且 <strong>② 当前 UTC 时间是否在 expires_at 之前？</strong> 且 <strong>③ load_agent_state 是否真实存在？</strong>
+            </div>
+          </div>
+        </div>
+
+        <div class="flow-step" style="border-left: 4px solid var(--danger);">
+          <div class="flow-step-icon icon-fail">❌</div>
+          <div class="flow-step-content">
+            <div class="flow-step-title" style="color: #fb7185;">
+              任一条件失败：触发 <code>delete_active_agent(key)</code> 并返回 <code>None</code>
+            </div>
+            <div class="flow-step-desc">
+              <strong>1. 惰性清除（Lazy Eviction）：</strong>在读操作时顺手执行 <code>DELETE FROM agentscope_session WHERE state_key='active_agent'</code>，清理无效数据，避免下次请求继续读脏数据。<br>
+              <strong>2. 安全降级（Safe Fallback）：</strong>返回 <code>None</code> 后，主路由放弃快速通道，平滑降级走<strong>完整意图流水线</strong>（Qdrant 检索 → LLM 分类 → MasterAgent 编排）。
+            </div>
+          </div>
+        </div>
+
+        <div class="flow-step" style="border-left: 4px solid var(--success);">
+          <div class="flow-step-icon icon-pass">✅</div>
+          <div class="flow-step-content">
+            <div class="flow-step-title" style="color: #34d399;">
+              全部条件通过：返回 <code>record.agent_name</code>
+            </div>
+            <div class="flow-step-desc">
+              进入快速续跑通道（Fast Path）：跳过 Qdrant 和意图分类模型，直接唤醒上次的子 Agent（耗时从 5~8s 锐减至 1~2s，节省全部前置 Token）。
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="highlight-box">
+        <strong>💡 为什么这叫“惰性驱逐（Lazy Eviction）”？</strong><br>
+        MySQL 本身不会在 30 分钟整的那一秒钟自动执行 Delete。系统采取了最经济的策略：<strong>“查到你的时候，发现你过期/损坏了，就顺手把你给删了”</strong>。既不需要额外的定时扫描后台任务（Cron Job），又保证了脏数据不会长期占用或干扰系统。
+      </div>
+    </div>
+
+    <!-- Java Engineer Comparison -->
+    <div class="flow-section">
+      <h2 class="section-title">
+        <span>☕</span> Java / Spring 与 Python 架构映射对照
+      </h2>
+      <table class="compare-table">
+        <thead>
+          <tr>
+            <th>对比维度</th>
+            <th>Java / Spring 企业级典型做法</th>
+            <th>本项目 Python / AgentScope 实现</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>存储介质</strong></td>
+            <td>通常使用 Redis 存储会话票据</td>
+            <td>使用 MySQL 表 <span class="badge-code">agentscope_session</span> 统一存储</td>
+          </tr>
+          <tr>
+            <td><strong>TTL 机制</strong></td>
+            <td>Redis 原生命令 <span class="badge-code">EXPIRE key 1800</span>，底层靠定期+惰性删除</td>
+            <td>字段显式保存 <span class="badge-code">expires_at (UTC)</span>，读取时进行逻辑比对</td>
+          </tr>
+          <tr>
+            <td><strong>状态关联</strong></td>
+            <td>分布式 Session / Spring StateMachine 上下文</td>
+            <td>双 Key 存储：<span class="badge-code">active_agent</span>（路标）与 <span class="badge-code">state:{agent}</span>（记忆实体）</td>
+          </tr>
+          <tr>
+            <td><strong>设计模式</strong></td>
+            <td>网关过滤器中的 <span class="badge-code">Read Repair / Fail-Safe Fallback</span></td>
+            <td><span class="badge-code">get_active_agent</span> 内聚的自愈防御校验</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+  </div>
+</body>
+</html>

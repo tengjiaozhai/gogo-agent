@@ -10,6 +10,8 @@ from scalar_fastapi import add_scalar_reference
 from gogo_agent.auth.router import router as auth_router
 from gogo_agent.chat.config import load_chat_agent_settings, require_model_configuration
 from gogo_agent.chat.router import router as chat_router
+from gogo_agent.travel.router import admin_router, callback_router, travel_router
+from gogo_agent.travel.service import BusinessError
 
 
 @asynccontextmanager
@@ -24,6 +26,9 @@ app = FastAPI(title="GoGo Agent", lifespan=lifespan)
 
 app.include_router(auth_router)
 app.include_router(chat_router)
+app.include_router(travel_router)
+app.include_router(admin_router)
+app.include_router(callback_router)
 add_scalar_reference(app, route="/scalar", title="GoGo Agent API 文档")
 
 
@@ -44,6 +49,15 @@ async def http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse
             "message": exc.detail,
             "detail": exc.detail,
         },
+    )
+
+
+@app.exception_handler(BusinessError)
+async def business_error_handler(_: Request, exc: BusinessError) -> JSONResponse:
+    """业务拒绝只返回固定错误码与不含个人资料的说明。"""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"code": exc.code, "message": str(exc), "detail": str(exc)},
     )
 
 

@@ -40,15 +40,21 @@
 ## frontend/src/api
 
 - [`frontend/src/api/auth.ts`](frontend/src/api/auth.ts) — 调用 Python 登录、登出和当前用户接口。
+- [`frontend/src/api/admin.ts`](frontend/src/api/admin.ts) — 调用 Python 管理员审批接口并将 snake_case 审批响应转换为页面契约。
 - [`frontend/src/api/chat.ts`](frontend/src/api/chat.ts) — 调用会话与反馈接口并解析基础聊天 SSE。
 - [`frontend/src/api/config.ts`](frontend/src/api/config.ts) — 选择同源或显式配置的 API 地址。
+- [`frontend/src/api/request.ts`](frontend/src/api/request.ts) — 提供阶段 D 页面共用的带认证 JSON 请求和 HTTP 错误类型。
+- [`frontend/src/api/time.ts`](frontend/src/api/time.ts) — 将 Python 无时区 UTC ISO 时间转换为浏览器时间戳。
+- [`frontend/src/api/travel.ts`](frontend/src/api/travel.ts) — 调用本人差旅、冲突、订单写入和内部预订接口。
 
 ## frontend/src/components
 
 - [`frontend/src/components/AgentMessageBlock.tsx`](frontend/src/components/AgentMessageBlock.tsx) — 渲染 Markdown 回复、反馈与后续丰富事件的消息区。
+- [`frontend/src/components/AdminApprovalPage.tsx`](frontend/src/components/AdminApprovalPage.tsx) — 提供管理员审批筛选、详情、备注、同意和拒绝页面。
 - [`frontend/src/components/BookingResultCard.tsx`](frontend/src/components/BookingResultCard.tsx) — 定义后续预订结果卡片展示。
 - [`frontend/src/components/ChatWindow.tsx`](frontend/src/components/ChatWindow.tsx) — 渲染会话历史、基础 SSE 回复与反馈，并在离开页面时终止旧流。
 - [`frontend/src/components/LoginPage.tsx`](frontend/src/components/LoginPage.tsx) — 登录并加载服务端用户身份。
+- [`frontend/src/components/MyTravelPage.tsx`](frontend/src/components/MyTravelPage.tsx) — 提供本人差旅列表、审批历史、预订记录和确认后的申请、修改、取消操作。
 - [`frontend/src/components/ProgressCard.tsx`](frontend/src/components/ProgressCard.tsx) — 定义后续 Agent 规划步骤的卡片展示。
 - [`frontend/src/components/Sidebar.tsx`](frontend/src/components/Sidebar.tsx) — 展示当前聊天入口、会话列表和退出登录。
 - [`frontend/src/components/TravelResultCard.tsx`](frontend/src/components/TravelResultCard.tsx) — 定义后续旅行搜索结果卡片展示。
@@ -57,6 +63,7 @@
 
 - [`frontend/src/store/authStore.ts`](frontend/src/store/authStore.ts) — 保存登录 token 和用户摘要，并在账号切换时清空聊天内存。
 - [`frontend/src/store/chatStore.ts`](frontend/src/store/chatStore.ts) — 管理当前会话、消息、反馈和流式渲染状态。
+- [`frontend/src/store/uiStore.ts`](frontend/src/store/uiStore.ts) — 管理聊天、我的差旅和管理员审批三个顶层页面视图。
 
 ## frontend/src/types
 
@@ -67,7 +74,7 @@
 - [`src/gogo_agent/__init__.py`](src/gogo_agent/__init__.py) — 标记 GoGo Agent 的 Python 包。
 - [`src/gogo_agent/cli.py`](src/gogo_agent/cli.py) — 装配仅含日期工具的 Agent 并提供终端入口。
 - [`src/gogo_agent/tools.py`](src/gogo_agent/tools.py) — 提供不依赖模型的本地日期工具。
-- [`src/gogo_agent/api.py`](src/gogo_agent/api.py) — 提供唯一 FastAPI 入口、启动配置校验、认证与会话路由及 API 文档和健康检查。
+- [`src/gogo_agent/api.py`](src/gogo_agent/api.py) — 提供唯一 FastAPI 入口、启动配置校验、认证、会话、差旅及审批路由和健康检查。
 - [`src/gogo_agent/model.py`](src/gogo_agent/model.py) — 为主/信息/意图调用统一创建 OpenAI 兼容模型并记录单次耗时与可用 token。
 - [`src/gogo_agent/request_context.py`](src/gogo_agent/request_context.py) — 定义服务端可信请求参数及只承载日志追踪号的异步任务作用域。
 
@@ -84,12 +91,13 @@
 ## src/gogo_agent/chat
 
 - [`src/gogo_agent/chat/__init__.py`](src/gogo_agent/chat/__init__.py) — 导出会话消息服务、执行器与路由入口。
-- [`src/gogo_agent/chat/config.py`](src/gogo_agent/chat/config.py) — 集中主/信息 Agent 提示词、轮次、模型与只读工具超时配置及启动校验。
+- [`src/gogo_agent/chat/config.py`](src/gogo_agent/chat/config.py) — 集中主/信息/管理 Agent 提示词、轮次、模型与工具超时配置及启动校验。
 - [`src/gogo_agent/chat/continuation.py`](src/gogo_agent/chat/continuation.py) — 用可信请求和精确续聊词恢复活跃 InfoAgent，处理过期与无效状态回退。
 - [`src/gogo_agent/chat/models.py`](src/gogo_agent/chat/models.py) — 定义会话、消息领域模型及请求响应视图 DTO。
 - [`src/gogo_agent/chat/repository.py`](src/gogo_agent/chat/repository.py) — 实现内存与 SQL 的业务历史、AgentState 与活跃路由记录存取，并处理已删除会话 ID 的重新归属。
 - [`src/gogo_agent/chat/service.py`](src/gogo_agent/chat/service.py) — 编排会话创建、归属校验后的历史读取和用户消息保存、标题及反馈。
-- [`src/gogo_agent/chat/executor.py`](src/gogo_agent/chat/executor.py) — 按可信请求运行主/信息 Agent 与活跃续聊，处理 JSON/SSE 出口并保存状态和工具记录。
+- [`src/gogo_agent/chat/executor.py`](src/gogo_agent/chat/executor.py) — 按可信请求运行主/信息/管理 Agent 与活跃续聊，处理 JSON/SSE、推荐及状态记录。
+- [`src/gogo_agent/chat/recommendation.py`](src/gogo_agent/chat/recommendation.py) — 在主答复完成后解析并去重轻量模型生成的后续问题建议。
 - [`src/gogo_agent/chat/dependencies.py`](src/gogo_agent/chat/dependencies.py) — 提供会话仓储、L2 记忆库与执行器的 FastAPI 依赖注入。
 - [`src/gogo_agent/chat/router.py`](src/gogo_agent/chat/router.py) — 定义 /api/chat 的会话接口，并在 SSE 建立前完成对话预处理。
 
@@ -97,9 +105,9 @@
 
 - [`src/gogo_agent/db/__init__.py`](src/gogo_agent/db/__init__.py) — 导出数据库 Base、模型类、连接引擎与会话工厂。
 - [`src/gogo_agent/db/base.py`](src/gogo_agent/db/base.py) — 定义统一的 SQLAlchemy DeclarativeBase 声明式基类。
-- [`src/gogo_agent/db/models.py`](src/gogo_agent/db/models.py) — 定义用户账号、会话、消息及 agentscope_session 内部状态的 SQLAlchemy ORM 数据模型。
+- [`src/gogo_agent/db/models.py`](src/gogo_agent/db/models.py) — 定义用户账号、会话、AgentState 与差旅/审批/档案/预订/审计的 SQLAlchemy ORM 表。
 - [`src/gogo_agent/db/session.py`](src/gogo_agent/db/session.py) — 管理数据库连接池、会话生成及 FastAPI 依赖注入。
-- [`src/gogo_agent/db/init_db.py`](src/gogo_agent/db/init_db.py) — 幂等初始化数据库表结构与填充初始脱敏种子用户。
+- [`src/gogo_agent/db/init_db.py`](src/gogo_agent/db/init_db.py) — 仅幂等初始化阶段 A 四表与初始脱敏账号，不隐式迁移阶段 D 业务表。
 
 ## src/gogo_agent/intent
 
@@ -113,6 +121,22 @@
 - [`src/gogo_agent/intent/seed.json`](src/gogo_agent/intent/seed.json) — 保存从 Java YAML 移植的 16 类 68 条运行时意图种子。
 - [`src/gogo_agent/intent/service.py`](src/gogo_agent/intent/service.py) — 执行单次模型改写与 L3 分类，验证动作保真并编排规则、向量和 LLM 短路。
 - [`src/gogo_agent/intent/vector.py`](src/gogo_agent/intent/vector.py) — 校验意图种子、构建版本化 Qdrant 索引并执行 L2 Top-2 阈值匹配。
+
+## src/gogo_agent/travel
+
+- [`src/gogo_agent/travel/__init__.py`](src/gogo_agent/travel/__init__.py) — 标记阶段 D 差旅业务包。
+- [`src/gogo_agent/travel/models.py`](src/gogo_agent/travel/models.py) — 定义差旅单、审批、政策、资料、冲突、预订的请求与响应契约。
+- [`src/gogo_agent/travel/repository.py`](src/gogo_agent/travel/repository.py) — 提供用户归属过滤、事务、订单锁与差旅业务 SQL 仓储。
+- [`src/gogo_agent/travel/service.py`](src/gogo_agent/travel/service.py) — 编排本人差旅、审批、政策、联系人和预订的确定性业务规则。
+- [`src/gogo_agent/travel/router.py`](src/gogo_agent/travel/router.py) — 暴露已鉴权的本人差旅接口、管理员审批接口和禁用的外部回调。
+- [`src/gogo_agent/travel/dependencies.py`](src/gogo_agent/travel/dependencies.py) — 注入差旅业务服务并在数据库缺业务表时明确拒绝业务请求。
+- [`src/gogo_agent/travel/tools.py`](src/gogo_agent/travel/tools.py) — 为管理 Agent 装配带可信身份的只读查询和待确认写入建议工具。
+- [`src/gogo_agent/travel/policy.py`](src/gogo_agent/travel/policy.py) — 按职级、城市、有效期选择结构化政策并确定性检查金额和舱位。
+- [`src/gogo_agent/travel/policy_seed.json`](src/gogo_agent/travel/policy_seed.json) — 保存版本化政策规则、城市档位与交通衔接时长种子。
+- [`src/gogo_agent/travel/knowledge.py`](src/gogo_agent/travel/knowledge.py) — 离线导入 DOCX 政策片段并按词面检索带来源版本的证据。
+- [`src/gogo_agent/travel/policy_corpus.sample.json`](src/gogo_agent/travel/policy_corpus.sample.json) — 提供可离线检索的脱敏政策片段样例。
+- [`src/gogo_agent/travel/conflict.py`](src/gogo_agent/travel/conflict.py) — 检测本人行程的日期重叠、跨城衔接和未知交通时长。
+- [`src/gogo_agent/travel/cache.py`](src/gogo_agent/travel/cache.py) — 缓存按用户、参数、版本和日期隔离的短时政策查询结果。
 
 ## docs
 
@@ -139,6 +163,8 @@
 - [`docs/契约样例/026-模型分工与观测.md`](docs/契约样例/026-模型分工与观测.md) — 对照 Java/Python 模型角色、环境配置、单次调用日志与离线验收边界。
 - [`docs/契约样例/027-活跃InfoAgent续跑.md`](docs/契约样例/027-活跃InfoAgent续跑.md) — 对照 Java/Python 活跃路由语义，提供 InfoAgent 续聊的逐步调试和验收指南。
 - [`docs/契约样例/028-可信身份与会话归属.md`](docs/契约样例/028-可信身份与会话归属.md) — 说明模型工具参数、认证上下文和 SQL 会话归属的信任边界与负例。
+- [`docs/契约样例/阶段D-029-041-调试指南.md`](docs/契约样例/阶段D-029-041-调试指南.md) — 提供阶段 D 的 Java/Python 对照、可复制命令、逐断点验收、预测练习与限制。
+- [`docs/契约样例/阶段D-前端与Scalar逐步调试.md`](docs/契约样例/阶段D-前端与Scalar逐步调试.md) — 指导用本地浏览器练习库、React 聊天页、Scalar、PyCharm 断点逐项学习 029–041。
 
 ## docs/架构
 
@@ -191,12 +217,21 @@
 - [`scripts/demo_026_model_roles.py`](scripts/demo_026_model_roles.py) — 用固定模型响应演示主/稳定档调用、token 日志和切换模型后的身份仓储不变。
 - [`scripts/demo_027_active_info.py`](scripts/demo_027_active_info.py) — 用离线 HTTP 演示真实 InfoAgent 活跃记录、精确续聊、回退和跨用户拒绝。
 - [`scripts/demo_028_trusted_identity.py`](scripts/demo_028_trusted_identity.py) — 用固定工具调用和 SQLite 演示伪造身份拒绝与删除会话复用后的归属。
+- [`scripts/init_stage_d_test_db.py`](scripts/init_stage_d_test_db.py) — 仅在隔离 SQLite 中创建阶段 D 业务表并展示建表前后结果。
+- [`scripts/migrate_stage_d_tables.py`](scripts/migrate_stage_d_tables.py) — 预检并显式创建 `.env` MySQL 中缺失的阶段 D 项目表，核验项目字段注释与关键唯一约束。
+- [`scripts/prepare_stage_d_browser_lab.py`](scripts/prepare_stage_d_browser_lab.py) — 创建不接触 `.env` 数据库的临时 SQLite、测试账号职级与模拟预订，供浏览器调试。
+- [`scripts/demo_029_040_stage_d.py`](scripts/demo_029_040_stage_d.py) — 用离线模型、真实管理 Toolkit 与隔离数据库逐项演示 029–040 分支。
+- [`scripts/build_policy_corpus.py`](scripts/build_policy_corpus.py) — 将指定 DOCX 离线切分为带来源和 SHA-256 版本的政策索引。
+- [`scripts/demo_034_policy_knowledge.py`](scripts/demo_034_policy_knowledge.py) — 用临时脱敏 DOCX 演示政策索引导入、检索与更新重建。
+- [`scripts/benchmark_041_thinking.py`](scripts/benchmark_041_thinking.py) — 用固定题集对照默认和高推理模型的耗时、JSON 有效率及工具误调用。
 
 ## output
 
 - [`output/l0_l1_intent_routing.html`](output/l0_l1_intent_routing.html) — 提供 L0/L1 意图路由和规则否决条件的独立交互图解。
 - [`output/show_me_023_execution_flow.html`](output/show_me_023_execution_flow.html) — 提供 023 从 HTTP 请求到 MasterModel._call_api 调用链路与 Java 工程化映射图解。
 - [`output/show_me_fastapi_depends_quiz.html`](output/show_me_fastapi_depends_quiz.html) — 提供 FastAPI Depends 核心机制、DAG 拓扑求解与 Java 对照的通关测评交互页面。
+- [`output/show_me_027_active_routing.html`](output/show_me_027_active_routing.html) — 提供 027 快速路由到上次子 Agent 的执行链路与两轮交互深度暗黑图解。
+- [`output/show_me_027_active_agent_validation.html`](output/show_me_027_active_agent_validation.html) — 提供 027 ActiveAgentRecord 三重门禁校验与惰性淘汰清理图解。
 
 ## tests
 
@@ -222,5 +257,7 @@
 - [`tests/test_026_model_roles.py`](tests/test_026_model_roles.py) — 验证主/稳定模型装配、缺失配置、逐次调用日志和身份仓储隔离。
 - [`tests/test_027_active_info.py`](tests/test_027_active_info.py) — 验证真实 InfoAgent 的 JSON/SSE 续聊、过期回退、跨用户隔离及 SQLite 活跃记录。
 - [`tests/test_028_identity_boundary.py`](tests/test_028_identity_boundary.py) — 验证模型伪造工具身份无效和 SQL 已删除会话重新归属的隔离。
+- [`tests/test_029_041_stage_d.py`](tests/test_029_041_stage_d.py) — 验证管理路由、工具身份、政策索引、缓存、推荐顺序及差旅 HTTP 权限。
+- [`tests/test_030_038_travel_business.py`](tests/test_030_038_travel_business.py) — 验证模型、政策、资料、差旅事务、冲突、预订与审批状态边界。
 - [`tests/test_mariadb_integration.py`](tests/test_mariadb_integration.py) — 验证真实 MariaDB 数据库连接、用户密码迁移、会话消息与 agentscope_session 存取。
 - [`tests/test_redis_integration.py`](tests/test_redis_integration.py) — 验证真实 172.22.22.123 Redis 连接、30 天 TTL、跨实例 Token 持久化与平滑降级。

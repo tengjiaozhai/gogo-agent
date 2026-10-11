@@ -1,0 +1,29 @@
+{
+  "version": "java-schema-2026-07",
+  "effective_from": "2026-01-01",
+  "effective_until": null,
+  "tier1_cities": ["北京", "上海", "广州", "深圳"],
+  "new_tier1_cities": ["成都", "杭州", "重庆", "武汉", "西安", "苏州", "天津", "南京", "长沙", "郑州", "东莞", "青岛", "沈阳", "宁波", "昆明", "厦门", "合肥", "佛山", "无锡", "哈尔滨"],
+  "tier2_cities": ["济南", "福州", "大连", "贵阳", "太原", "南昌", "南宁", "石家庄", "长春", "呼和浩特", "兰州", "乌鲁木齐", "海口", "银川", "西宁", "拉萨"],
+  "city_pair_minutes": {
+    "北京-上海": 300, "北京-广州": 360, "北京-深圳": 360, "北京-杭州": 300,
+    "北京-南京": 270, "北京-天津": 90, "北京-成都": 360, "北京-西安": 330,
+    "北京-武汉": 300, "北京-郑州": 240, "上海-广州": 330, "上海-深圳": 330,
+    "上海-杭州": 120, "上海-南京": 130, "上海-苏州": 90, "上海-成都": 390,
+    "上海-武汉": 300, "广州-深圳": 90, "广州-长沙": 210, "成都-重庆": 120
+  },
+  "rules": [
+    {"level_min": 8, "level_max": 99, "city_tier": "一线", "flight_class": "商务舱", "train_seat_class": "一等座", "hotel_limit": "700", "hotel_star_limit": 5, "daily_meal_limit": "200", "daily_transport_limit": "300", "approval_threshold": "8000", "advance_booking_days": 3},
+    {"level_min": 8, "level_max": 99, "city_tier": "新一线", "flight_class": "商务舱", "train_seat_class": "一等座", "hotel_limit": "550", "hotel_star_limit": 5, "daily_meal_limit": "200", "daily_transport_limit": "300", "approval_threshold": "8000", "advance_booking_days": 3},
+    {"level_min": 8, "level_max": 99, "city_tier": "其他", "flight_class": "商务舱", "train_seat_class": "一等座", "hotel_limit": "450", "hotel_star_limit": 5, "daily_meal_limit": "200", "daily_transport_limit": "300", "approval_threshold": "8000", "advance_booking_days": 3},
+    {"level_min": 7, "level_max": 7, "city_tier": "一线", "flight_class": "经济舱/商务舱", "train_seat_class": "一等座", "hotel_limit": "600", "hotel_star_limit": 5, "daily_meal_limit": "200", "daily_transport_limit": "300", "approval_threshold": "8000", "advance_booking_days": 3},
+    {"level_min": 7, "level_max": 7, "city_tier": "新一线", "flight_class": "经济舱/商务舱", "train_seat_class": "一等座", "hotel_limit": "500", "hotel_star_limit": 5, "daily_meal_limit": "200", "daily_transport_limit": "300", "approval_threshold": "8000", "advance_booking_days": 3},
+    {"level_min": 7, "level_max": 7, "city_tier": "其他", "flight_class": "经济舱/商务舱", "train_seat_class": "一等座", "hotel_limit": "400", "hotel_star_limit": 5, "daily_meal_limit": "200", "daily_transport_limit": "300", "approval_threshold": "8000", "advance_booking_days": 3},
+    {"level_min": 6, "level_max": 6, "city_tier": "一线", "flight_class": "经济舱", "train_seat_class": "一等座", "hotel_limit": "500", "hotel_star_limit": 4, "daily_meal_limit": "150", "daily_transport_limit": "200", "approval_threshold": "5000", "advance_booking_days": 3},
+    {"level_min": 6, "level_max": 6, "city_tier": "新一线", "flight_class": "经济舱", "train_seat_class": "一等座", "hotel_limit": "400", "hotel_star_limit": 4, "daily_meal_limit": "150", "daily_transport_limit": "200", "approval_threshold": "5000", "advance_booking_days": 3},
+    {"level_min": 6, "level_max": 6, "city_tier": "其他", "flight_class": "经济舱", "train_seat_class": "一等座", "hotel_limit": "350", "hotel_star_limit": 4, "daily_meal_limit": "150", "daily_transport_limit": "200", "approval_threshold": "5000", "advance_booking_days": 3},
+    {"level_min": 1, "level_max": 5, "city_tier": "一线", "flight_class": "经济舱", "train_seat_class": "二等座", "hotel_limit": "400", "hotel_star_limit": 4, "daily_meal_limit": "150", "daily_transport_limit": "200", "approval_threshold": "5000", "advance_booking_days": 3},
+    {"level_min": 1, "level_max": 5, "city_tier": "新一线", "flight_class": "经济舱", "train_seat_class": "二等座", "hotel_limit": "350", "hotel_star_limit": 4, "daily_meal_limit": "150", "daily_transport_limit": "200", "approval_threshold": "5000", "advance_booking_days": 3},
+    {"level_min": 1, "level_max": 5, "city_tier": "其他", "flight_class": "经济舱", "train_seat_class": "二等座", "hotel_limit": "300", "hotel_star_limit": 4, "daily_meal_limit": "150", "daily_transport_limit": "200", "approval_threshold": "5000", "advance_booking_days": 3}
+  ]
+}

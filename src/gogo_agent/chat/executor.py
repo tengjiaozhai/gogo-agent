@@ -1,6 +1,7 @@
 """对话执行层：集成 AgentScope 2.x Agent 与 L1 业务历史、L2 AgentState 会话记忆持久化。"""
 
 import asyncio
+import json
 import logging
 from inspect import isawaitable, signature, Parameter
 from typing import AsyncContextManager, AsyncGenerator, Callable, Optional
@@ -21,16 +22,19 @@ from gogo_agent.intent.pipeline import IntentPipelineService, PreparedIntentTurn
 from gogo_agent.intent.runtime import open_intent_pipeline
 from gogo_agent.model import create_chat_model
 from gogo_agent.request_context import RequestContext, current_trace_id, trace_scope
+from gogo_agent.travel.dependencies import get_travel_service
+from gogo_agent.travel.tools import build_manage_toolkit
 
 from .continuation import ActiveAgentContinuation, InfoAgentContinuation, TurnEntry, choose_turn_entry
 from .config import (
-    INFO_SYSTEM_PROMPT, MODEL_MAX_RETRIES, ChatAgentSettings,
+    INFO_SYSTEM_PROMPT, MANAGE_SYSTEM_PROMPT, MODEL_MAX_RETRIES, ChatAgentSettings,
     load_chat_agent_settings, master_system_prompt, require_model_configuration,
 )
 from .repository import (
     AgentSessionStoreProtocol,
     create_agent_session_store,
 )
+from .recommendation import generate_recommendations
 from .service import ChatHistoryService
 
 logger = logging.getLogger(__name__)
@@ -85,12 +89,20 @@ class _FallbackMockModel(OpenAIChatModel):
 
 
 class ChatAgentExecutor:
-    """协调消息、AgentState 和主 Agent 的只读信息子 Agent 调用。"""
+    """协调消息、AgentState 与主 Agent 的信息、差旅管理子 Agent。"""
 
     # 019：所有识别结果仍进入同一个协调入口，高置信不直跳子 Agent。
     COORDINATOR_AGENT_NAME = "GoGo"
     INFO_AGENT_NAME = "InfoAgent"
     INFO_TOOL_NAME = "info_agent"
+    MANAGE_AGENT_NAME = "ItineraryManageAgent"
+    MANAGE_TOOL_NAME = "itinerary_manage_agent"
+    MANAGE_INTENTS = frozenset({
+        IntentCategory.TRAVEL_APPLICATION, IntentCategory.TRAVEL_CANCEL,
+        IntentCategory.TRAVEL_MODIFY, IntentCategory.APPROVAL_QUERY,
+        IntentCategory.TRAVEL_ORDER_QUERY, IntentCategory.POLICY_QUERY,
+        IntentCategory.BOOKING,
+    })
 
     def __init__(
         self,
@@ -120,18 +132,40 @@ class ChatAgentExecutor:
     def _build_model(self, stream: bool = False, *, role: str = "master"):
         """正式模型按角色选主/稳定模型；离线测试显式注入替身。"""
         settings = require_model_configuration()
-        if role not in ("master", "info"):
+        if role not in ("master", "info", "manage", "recommendation"):
             raise ValueError("未知聊天模型角色")
         return create_chat_model(
             OpenAICredential(
                 api_key=settings.api_key,
                 base_url=settings.base_url,
             ),
-            settings.chat_model_name if role == "master" else settings.stable_model_name,
+            (
+                settings.chat_model_name if role in ("master", "manage")
+                else self._settings.recommendation_model_name if role == "recommendation"
+                else settings.stable_model_name
+            ),
             role=role,
             stream=stream,
             timeout_seconds=self._settings.model_timeout_seconds,
+            parameters=OpenAIChatModel.Parameters(thinking_enable=False),
         )
+
+    async def recommend_questions(self, question: str, answer: str) -> list[str]:
+        """在主回复保存后尽力生成建议；失败不改变本轮成功结果。"""
+        model = None
+        try:
+            model = self._build_model(stream=False, role="recommendation")
+            return await generate_recommendations(model, question, answer)
+        except Exception as exc:
+            logger.info("recommendation skipped: %s", type(exc).__name__)
+            return []
+        finally:
+            if model is not None:
+                client = getattr(model, "client", None)
+                if client is not None:
+                    closed = client.close()
+                    if isawaitable(closed):
+                        await closed
 
     @staticmethod
     def _state_session_id(session_id: str, user_id: str) -> str:
@@ -145,6 +179,7 @@ class ChatAgentExecutor:
             state_session_id, agent_name=self.COORDINATOR_AGENT_NAME,
         )
         self._session_store.delete_agent_state(state_session_id, agent_name=self.INFO_AGENT_NAME)
+        self._session_store.delete_agent_state(state_session_id, agent_name=self.MANAGE_AGENT_NAME)
         self._session_store.delete_active_agent(state_session_id)
         self._session_store.delete_agent_state(session_id, agent_name=self.COORDINATOR_AGENT_NAME)
 
@@ -174,6 +209,24 @@ class ChatAgentExecutor:
             model_config=ModelConfig(max_retries=MODEL_MAX_RETRIES),
         )
 
+    def _build_manage_agent(self, request: RequestContext, state: AgentState | None = None) -> Agent:
+        """以服务端认证身份创建管理 Agent，模型只看到受控工具 schema。"""
+        state_session_id = self._state_session_id(request.session_id, request.user_id)
+        if state is None:
+            state = self._session_store.load_agent_state(state_session_id, agent_name=self.MANAGE_AGENT_NAME)
+        return Agent(
+            name=self.MANAGE_AGENT_NAME,
+            system_prompt=MANAGE_SYSTEM_PROMPT,
+            model=self._build_model(stream=False, role="manage"),
+            toolkit=build_manage_toolkit(get_travel_service(), request),
+            state=state or AgentState(session_id=state_session_id),
+            react_config=ReActConfig(
+                max_iters=self._settings.manage_max_iters,
+                interruption_raise_cancelled_error=True,
+            ),
+            model_config=ModelConfig(max_retries=MODEL_MAX_RETRIES),
+        )
+
     def _build_agent(
         self,
         state: AgentState,
@@ -182,12 +235,15 @@ class ChatAgentExecutor:
         tool_calls: list[dict[str, str]],
         stream: bool = False,
         info_states: list[AgentState] | None = None,
+        manage_states: list[AgentState] | None = None,
     ) -> Agent:
         """用识别结果决定本轮可见工具；身份仍从可信请求参数传入。"""
         model = self._build_model(stream=stream)
         intents = "、".join(item.intent.value for item in prepared.decision.result.intents)
-        toolkit = None
-        if any(item.intent == IntentCategory.GENERAL_INFO for item in prepared.decision.result.intents):
+        tools: list[FunctionTool] = []
+        has_info = any(item.intent == IntentCategory.GENERAL_INFO for item in prepared.decision.result.intents)
+        has_manage = any(item.intent in self.MANAGE_INTENTS for item in prepared.decision.result.intents)
+        if has_info:
             async def ask_info_agent(question: str) -> str:
                 """委派普通公共信息问题给只读 InfoAgent，再返回其回答。"""
                 child: Agent | None = None
@@ -226,7 +282,7 @@ class ChatAgentExecutor:
                     tool_calls.append(record)
                     await self._close_agent_model(child)
 
-            toolkit = Toolkit(tools=[FunctionTool(
+            tools.append(FunctionTool(
                 ask_info_agent,
                 name=self.INFO_TOOL_NAME,
                 is_read_only=True,
@@ -235,10 +291,62 @@ class ChatAgentExecutor:
                     behavior=PermissionBehavior.ALLOW,
                     message="允许只读公共信息查询",
                 ),
-            )])
+            ))
+        if has_manage:
+            async def ask_manage_agent(question: str) -> str:
+                """委派本人差旅管理诉求；数据库写入仍需独立确认入口。"""
+                child: Agent | None = None
+                status = "failed"
+                error_type: str | None = None
+                try:
+                    child = self._build_manage_agent(request)
+                    async with asyncio.timeout(self._settings.manage_tool_timeout_seconds) as deadline:
+                        reply = await child.reply(UserMsg(name=self.COORDINATOR_AGENT_NAME, content=question))
+                    if deadline.expired():
+                        raise TimeoutError("差旅管理 Agent 工具调用超时")
+                    task = asyncio.current_task()
+                    if task is not None and task.cancelling():
+                        raise asyncio.CancelledError
+                    if reply.finished_reason != ReplyFinishedReason.COMPLETED:
+                        raise RuntimeError(f"ManageAgent finished with {reply.finished_reason}")
+                    answer = reply.get_text_content() or ""
+                    if not answer.strip():
+                        raise ValueError("差旅管理 Agent 没有返回可用回答")
+                    if manage_states is not None:
+                        manage_states.append(child.state)
+                    status = "completed"
+                    return answer
+                except BaseException as exc:
+                    error_type = type(exc).__name__
+                    raise
+                finally:
+                    record = {
+                        "tool_name": self.MANAGE_TOOL_NAME,
+                        "agent_name": self.MANAGE_AGENT_NAME,
+                        "status": status,
+                        "trace_id": request.trace_id,
+                    }
+                    if error_type:
+                        record["error_type"] = error_type
+                    tool_calls.append(record)
+                    await self._close_agent_model(child)
+
+            tools.append(FunctionTool(
+                ask_manage_agent,
+                name=self.MANAGE_TOOL_NAME,
+                is_read_only=True,
+                is_concurrency_safe=False,
+                permission=PermissionDecision(
+                    behavior=PermissionBehavior.ALLOW,
+                    message="允许受控差旅管理查询和待确认建议",
+                ),
+            ))
+        toolkit = Toolkit(tools=tools) if tools else None
         return Agent(
             name=self.COORDINATOR_AGENT_NAME,
-            system_prompt=master_system_prompt(intents, info_tool_enabled=toolkit is not None),
+            system_prompt=master_system_prompt(
+                intents, info_tool_enabled=has_info, manage_tool_enabled=has_manage,
+            ),
             model=model,
             toolkit=toolkit,
             state=state,
@@ -258,10 +366,12 @@ class ChatAgentExecutor:
         tool_calls: list[dict[str, str]],
         stream: bool,
         info_states: list[AgentState],
+        manage_states: list[AgentState],
     ) -> Agent:
         """保留 020–026 测试替身的旧签名，同时让正式入口收集 Info 状态。"""
-        params = signature(self._build_agent).parameters.values()
-        accepts_info_states = "info_states" in signature(self._build_agent).parameters or any(
+        parameter_map = signature(self._build_agent).parameters
+        params = parameter_map.values()
+        accepts_extra = any(
             param.kind is Parameter.VAR_KEYWORD for param in params
         )
         kwargs = {
@@ -271,8 +381,10 @@ class ChatAgentExecutor:
             "tool_calls": tool_calls,
             "stream": stream,
         }
-        if accepts_info_states:
+        if "info_states" in parameter_map or accepts_extra:
             kwargs["info_states"] = info_states
+        if "manage_states" in parameter_map or accepts_extra:
+            kwargs["manage_states"] = manage_states
         return self._build_agent(**kwargs)
 
     def _save_user_turn(self, session_id: str, user_id: str, message: str) -> RequestContext:
@@ -370,7 +482,7 @@ class ChatAgentExecutor:
         """不把工具失败、中断或轮次耗尽保存为成功回复。"""
         failed = next((call for call in tool_calls if call["status"] == "failed"), None)
         if failed:
-            return f"信息子 Agent 调用失败（{failed.get('error_type', 'ToolError')}）"
+            return f"子 Agent 调用失败（{failed.get('error_type', 'ToolError')}）"
         if reason == ReplyFinishedReason.EXCEED_MAX_ITERS:
             return "主 Agent 达到最大推理轮次"
         if reason == ReplyFinishedReason.INTERRUPTED:
@@ -419,6 +531,7 @@ class ChatAgentExecutor:
             agent: Agent | None = None
             tool_calls: list[dict[str, str]] = []
             info_states: list[AgentState] = []
+            manage_states: list[AgentState] = []
             try:
                 agent_state = self._session_store.load_agent_state(
                     state_session_id, agent_name=self.COORDINATOR_AGENT_NAME,
@@ -430,6 +543,7 @@ class ChatAgentExecutor:
                 agent = self._build_agent_for_turn(
                     state=agent_state, prepared=prepared, request=request,
                     tool_calls=tool_calls, stream=False, info_states=info_states,
+                    manage_states=manage_states,
                 )
                 reply_msg = await agent.reply(UserMsg(name="user", content=prepared.effective_question.question))
             except Exception as exc:
@@ -459,6 +573,10 @@ class ChatAgentExecutor:
             if info_states:
                 self._session_store.save_agent_state(
                     state_session_id, info_states[-1], agent_name=self.INFO_AGENT_NAME,
+                )
+            if manage_states:
+                self._session_store.save_agent_state(
+                    state_session_id, manage_states[-1], agent_name=self.MANAGE_AGENT_NAME,
                 )
             self._session_store.save_agent_state(
                 state_session_id, agent.state, agent_name=self.COORDINATOR_AGENT_NAME,
@@ -496,6 +614,9 @@ class ChatAgentExecutor:
                     data_lines = "\n".join(f"data: {line}" for line in text.split("\n"))
                     yield f"event: message\n{data_lines}\n\n"
                     yield f"event: message_id\ndata: {msg_id}\n\n"
+                    suggestions = await self.recommend_questions(message, text)
+                    if suggestions:
+                        yield "event: suggestions\ndata: " + json.dumps(suggestions, ensure_ascii=False) + "\n\n"
 
                 return self._traced_stream(request, continuation_events())
             prepared = await self._prepare_turn(request)
@@ -544,6 +665,7 @@ class ChatAgentExecutor:
         agent: Agent | None = None
         tool_calls: list[dict[str, str]] = []
         info_states: list[AgentState] = []
+        manage_states: list[AgentState] = []
         final_reason: ReplyFinishedReason | None = None
 
         try:
@@ -557,6 +679,7 @@ class ChatAgentExecutor:
             agent = self._build_agent_for_turn(
                 state=agent_state, prepared=prepared, request=request,
                 tool_calls=tool_calls, stream=True, info_states=info_states,
+                manage_states=manage_states,
             )
             async for event in agent.reply_stream(
                 UserMsg(name="user", content=prepared.effective_question.question),
@@ -611,6 +734,10 @@ class ChatAgentExecutor:
                 self._session_store.save_agent_state(
                     state_session_id, info_states[-1], agent_name=self.INFO_AGENT_NAME,
                 )
+            if manage_states:
+                self._session_store.save_agent_state(
+                    state_session_id, manage_states[-1], agent_name=self.MANAGE_AGENT_NAME,
+                )
             self._session_store.save_agent_state(
                 state_session_id, agent.state, agent_name=self.COORDINATOR_AGENT_NAME,
             )
@@ -622,3 +749,8 @@ class ChatAgentExecutor:
 
         # 步骤 6：发送消息 ID 的 SSE 完成事件
         yield f"event: message_id\ndata: {msg_id}\n\n"
+        suggestions = await self.recommend_questions(
+            prepared.effective_question.question, full_reply_text,
+        )
+        if suggestions:
+            yield "event: suggestions\ndata: " + json.dumps(suggestions, ensure_ascii=False) + "\n\n"

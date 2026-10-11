@@ -2101,6 +2101,50 @@ html, body {
   .chat-scope-note {
     padding: 7px 16px;
   }
+
+  .admin-page {
+    padding: 18px 16px;
+  }
+
+  .admin-heading {
+    align-items: center;
+  }
+
+  .travel-header-actions {
+    align-items: flex-end;
+    flex-direction: column;
+  }
+
+  .travel-layout {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .travel-list,
+  .travel-main {
+    max-height: none;
+  }
+
+  .travel-main {
+    padding: 16px;
+  }
+
+  .travel-editor-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .travel-field:last-child {
+    grid-column: auto;
+  }
+
+  .admin-card-actions {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .admin-remark-input {
+    flex-basis: 100%;
+  }
 }
 
 /* ── Human-in-the-Loop 交互卡片 ─────────────────────────────────────────── */
@@ -2935,6 +2979,7 @@ html, body {
 }
 
 .travel-card {
+  width: 100%;
   background: #fff;
   border: 1px solid #ececec;
   border-radius: 12px;
@@ -2942,6 +2987,9 @@ html, body {
   cursor: pointer;
   transition: all 0.15s;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+  color: inherit;
+  font: inherit;
+  text-align: left;
 }
 
 .travel-card:hover {
@@ -3311,6 +3359,136 @@ html, body {
 .travel-page.admin-page {
   display: flex;
   flex-direction: column;
+}
+
+.admin-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.travel-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.travel-notice {
+  padding: 10px 14px;
+  margin-bottom: 14px;
+  background: #f6ffed;
+  border: 1px solid #b7eb8f;
+  border-radius: 8px;
+  color: #389e0d;
+  font-size: 13px;
+}
+
+.travel-editor {
+  max-width: 860px;
+}
+
+.travel-editor h2 {
+  margin: 0;
+  color: #1a1a1a;
+  font-size: 20px;
+}
+
+.travel-editor-hint {
+  margin: 6px 0 18px;
+  color: #8b949e;
+  font-size: 13px;
+}
+
+.travel-editor-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 18px;
+}
+
+.travel-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: #595959;
+  font-size: 13px;
+}
+
+.travel-field:last-child {
+  grid-column: 1 / -1;
+}
+
+.travel-field input {
+  min-width: 0;
+  padding: 9px 11px;
+  border: 1px solid #d9d9d9;
+  border-radius: 8px;
+  color: #1a1a1a;
+  font: inherit;
+  outline: none;
+}
+
+.travel-field input:focus {
+  border-color: #1677ff;
+  box-shadow: 0 0 0 2px rgba(22, 119, 255, 0.12);
+}
+
+.travel-conflict-report {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 18px;
+  padding: 12px 14px;
+  background: #fffbe6;
+  border: 1px solid #ffe58f;
+  border-radius: 8px;
+  color: #614700;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.travel-conflict-report small {
+  color: #ad8b00;
+}
+
+.travel-approval-history {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px 12px;
+  background: #fafafa;
+  border-radius: 8px;
+  color: #595959;
+  font-size: 12.5px;
+}
+
+.travel-approval-history > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.travel-approval-history strong {
+  color: #1a1a1a;
+}
+
+.travel-extra-bookings {
+  margin-top: 18px;
+  padding: 16px;
+  background: #fff;
+  border: 1px solid #ececec;
+  border-radius: 12px;
+}
+
+.travel-extra-bookings h2 {
+  margin: 0 0 5px;
+  color: #1a1a1a;
+  font-size: 15px;
+}
+
+.travel-extra-bookings p {
+  margin: 0 0 12px;
+  color: #8b949e;
+  font-size: 12.5px;
 }
 
 /* ── 偏好设置页面 ──────────────────────────────────────────────── */

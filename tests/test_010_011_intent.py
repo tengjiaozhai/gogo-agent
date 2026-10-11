@@ -182,7 +182,7 @@ async def test_real_sdk_request_shape_and_both_retry_layers(monkeypatch, http_st
         assert len(requests) == 1
         request = requests[0]
         assert request["stream"] is False
-        assert request["temperature"] == 0 and request["max_tokens"] == 2048
+        assert request["temperature"] == 0 and request["max_tokens"] == 8192
         assert "thinking" not in request
         assert "tools" not in request and "tool_choice" not in request
         assert request["response_format"] == {"type": "json_object"}

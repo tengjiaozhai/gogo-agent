@@ -13,7 +13,9 @@ if _src_dir not in sys.path:
     sys.path.insert(0, _src_dir)
 
 from gogo_agent.db.base import Base
-from gogo_agent.db.models import UserAccountModel
+from gogo_agent.db.models import (
+    AgentScopeSessionModel, ChatConversationModel, ChatMessageModel, UserAccountModel,
+)
 from gogo_agent.db.session import get_engine, get_session_factory
 
 
@@ -31,8 +33,11 @@ def init_database(engine: Optional[Engine] = None, seed_users: bool = True) -> b
         return False
 
     print(f"[DB] 正在连接目标数据库初始化表结构: {eng.url.render_as_string(hide_password=True)}")
-    # 创建所有注册在 Base 上的表
-    Base.metadata.create_all(bind=eng)
+    # 001–005 的入口只初始化原有四张表；阶段 D 业务表另用显式迁移。
+    Base.metadata.create_all(bind=eng, tables=[
+        UserAccountModel.__table__, ChatConversationModel.__table__,
+        ChatMessageModel.__table__, AgentScopeSessionModel.__table__,
+    ])
     
     # 确保 chat_message 表中存在 extra, feedback, feedback_at 字段 (兼容已有环境)
     from sqlalchemy import text

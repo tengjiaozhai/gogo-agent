@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>027 架构图解：快速路由到上次子 Agent 的完整执行链路</title>
+  <style>
+    :root {
+      --bg: #0b1120;
+      --card-bg: #151f32;
+      --card-border: #24344d;
+      --card-hover: #1c2b45;
+      --primary: #38bdf8;
+      --secondary: #818cf8;
+      --accent: #f43f5e;
+      --warning: #fbbf24;
+      --success: #34d399;
+      --purple: #c084fc;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --code-bg: #0d1526;
+      --node-round1: #38bdf8;
+      --node-round2: #34d399;
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      padding: 2.5rem 1.25rem;
+    }
+    .container {
+      max-width: 1180px;
+      margin: 0 auto;
+    }
+    header {
+      text-align: center;
+      margin-bottom: 2.5rem;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.4rem 1.1rem;
+      border-radius: 9999px;
+      font-size: 0.85rem;
+      font-weight: 700;
+      background: rgba(56, 189, 248, 0.15);
+      color: var(--primary);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      margin-bottom: 1rem;
+    }
+    h1 {
+      font-size: 2.3rem;
+      font-weight: 800;
+      margin-bottom: 0.75rem;
+      background: linear-gradient(135deg, #38bdf8 0%, #818cf8 50%, #34d399 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .subtitle {
+      color: var(--text-muted);
+      font-size: 1.05rem;
+      max-width: 820px;
+      margin: 0 auto;
+    }
+
+    /* Cards */
+    .section {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 2rem;
+      margin-bottom: 2.5rem;
+      box-shadow: 0 10px 35px rgba(0, 0, 0, 0.4);
+    }
+    .section-title {
+      font-size: 1.4rem;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    /* Two Rounds Split Flow */
+    .rounds-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.75rem;
+    }
+    @media (max-width: 900px) {
+      .rounds-grid { grid-template-columns: 1fr; }
+    }
+    .round-card {
+      background: rgba(13, 21, 38, 0.7);
+      border: 2px solid;
+      border-radius: 14px;
+      padding: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+    .round-card.r1 {
+      border-color: rgba(56, 189, 248, 0.4);
+    }
+    .round-card.r2 {
+      border-color: rgba(52, 211, 153, 0.4);
+    }
+    .round-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-bottom: 0.75rem;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .round-title {
+      font-size: 1.2rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .r1 .round-title { color: var(--primary); }
+    .r2 .round-title { color: var(--success); }
+
+    .tag {
+      font-size: 0.75rem;
+      font-weight: 700;
+      padding: 0.25rem 0.6rem;
+      border-radius: 6px;
+    }
+    .tag-blue { background: rgba(56, 189, 248, 0.2); color: var(--primary); }
+    .tag-green { background: rgba(52, 211, 153, 0.2); color: var(--success); }
+    .tag-red { background: rgba(244, 63, 94, 0.2); color: var(--accent); }
+    .tag-purple { background: rgba(192, 132, 252, 0.2); color: var(--purple); }
+
+    /* Flow Items */
+    .flow-chain {
+      display: flex;
+      flex-direction: column;
+      gap: 0.85rem;
+    }
+    .flow-node {
+      background: #182438;
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 0.9rem 1.1rem;
+      font-size: 0.9rem;
+      transition: all 0.2s;
+    }
+    .flow-node:hover {
+      background: #1f304d;
+      border-color: var(--primary);
+    }
+    .flow-node-title {
+      font-weight: 700;
+      margin-bottom: 0.25rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .flow-node-desc {
+      color: var(--text-muted);
+      font-size: 0.82rem;
+    }
+    .arrow-down {
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 1.1rem;
+      line-height: 1;
+    }
+
+    /* Bypass Callout */
+    .bypass-box {
+      background: rgba(244, 63, 94, 0.1);
+      border: 1px dashed rgba(244, 63, 94, 0.4);
+      border-radius: 10px;
+      padding: 1rem;
+      color: #fda4af;
+      font-size: 0.85rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    /* Breakpoints Table */
+    .bp-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 1rem;
+      font-size: 0.9rem;
+    }
+    .bp-table th, .bp-table td {
+      padding: 0.9rem 1rem;
+      text-align: left;
+      border-bottom: 1px solid var(--card-border);
+    }
+    .bp-table th {
+      background: #0f1828;
+      color: var(--primary);
+      font-weight: 700;
+    }
+    .bp-table tr:hover {
+      background: rgba(255, 255, 255, 0.02);
+    }
+    .file-loc {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+      font-size: 0.82rem;
+      color: var(--purple);
+    }
+    .status-hit {
+      color: var(--success);
+      font-weight: 700;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+    }
+    .status-skip {
+      color: var(--accent);
+      font-weight: 700;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+    }
+
+    /* Key-Value Inspection */
+    .inspect-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1.25rem;
+      margin-top: 1rem;
+    }
+    .inspect-box {
+      background: var(--code-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 1.25rem;
+      font-size: 0.88rem;
+    }
+    .inspect-box h4 {
+      color: var(--warning);
+      margin-bottom: 0.5rem;
+      font-size: 0.95rem;
+    }
+    .code-snip {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.82rem;
+      color: #93c5fd;
+      background: #060a14;
+      padding: 0.5rem 0.75rem;
+      border-radius: 6px;
+      margin-top: 0.5rem;
+      word-break: break-all;
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div class="badge">🚀 阶段 C · 027 活跃智能体路由</div>
+    <h1>快速路由到上次子 Agent 的完整执行链路</h1>
+    <p class="subtitle">深度比对：第一轮如何通过“成功调用 + 回复落库”建立 30 分钟活跃票据；第二轮“继续”如何精准短路意图与主 Agent，直连子 Agent 回复。</p>
+  </header>
+
+  <!-- 第一部分：两轮交互全景流转对比 -->
+  <section class="section">
+    <div class="section-title">
+      <span>🔄</span>
+      <span>两轮交互时序流转深度对比（首轮建状态 vs 次轮短路直连）</span>
+    </div>
+
+    <div class="rounds-grid">
+      
+      <!-- 第一轮 -->
+      <div class="round-card r1">
+        <div class="round-header">
+          <div class="round-title">
+            <span>① 第一轮：普通问题</span>
+          </div>
+          <span class="tag tag-blue">建立活跃记录</span>
+        </div>
+
+        <div style="font-size: 0.88rem; color: #cbd5e1;">
+          <strong>用户输入：</strong>
+          <span style="color: var(--primary);">“请调用 info_agent 回答：东京和上海的时差是多少？”</span>
+        </div>
+
+        <div class="flow-chain">
+          <div class="flow-node">
+            <div class="flow-node-title">
+              <span>1. 活跃检查：_active_agent_for_turn()</span>
+              <span class="tag tag-blue">返回 None</span>
+            </div>
+            <div class="flow-node-desc">会话无活跃记录，或者输入不是纯续跑词 ➔ 进入完整流水线。</div>
+          </div>
+
+          <div class="arrow-down">↓</div>
+
+          <div class="flow-node">
+            <div class="flow-node-title">
+              <span>2. 意图流水线：_prepare_turn()</span>
+              <span class="tag tag-blue">识别为 general_info</span>
+            </div>
+            <div class="flow-node-desc">原句快筛命中或改写后命中通用信息分类。</div>
+          </div>
+
+          <div class="arrow-down">↓</div>
+
+          <div class="flow-node">
+            <div class="flow-node-title">
+              <span>3. 主 Agent 挂载工具：GoGo</span>
+              <span class="tag tag-purple">挂载 ask_info_agent</span>
+            </div>
+            <div class="flow-node-desc">根据 general_info 动态为 GoGo Toolkit 注册只读 info_agent。</div>
+          </div>
+
+          <div class="arrow-down">↓</div>
+
+          <div class="flow-node">
+            <div class="flow-node-title">
+              <span>4. 执行工具：InfoAgent.reply()</span>
+              <span class="tag tag-green">status = completed</span>
+            </div>
+            <div class="flow-node-desc">子 Agent 独立计算产出回复文本与未提交的 AgentState。</div>
+          </div>
+
+          <div class="arrow-down">↓</div>
+
+          <div class="flow-node">
+            <div class="flow-node-title">
+              <span>5. GoGo 汇总并提交最终消息</span>
+              <span class="tag tag-blue">返回 HTTP 回复</span>
+            </div>
+            <div class="flow-node-desc">GoGo 整合 ToolResultBlock，生成最终回复并持久化。</div>
+          </div>
+
+          <div class="arrow-down">↓</div>
+
+          <div class="flow-node" style="border-color: var(--warning); background: rgba(251, 191, 36, 0.08);">
+            <div class="flow-node-title" style="color: var(--warning);">
+              <span>6. 核心落库：record_completed_agent()</span>
+              <span class="tag" style="background: rgba(251, 191, 36, 0.2); color: var(--warning);">30min 票据</span>
+            </div>
+            <div class="flow-node-desc">
+              保存 InfoAgent 的 AgentState，并在会话存储中写入 ActiveAgentRecord(agent_name="InfoAgent", expires_at=+30m)。
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 第二轮 -->
+      <div class="round-card r2">
+        <div class="round-header">
+          <div class="round-title">
+            <span>② 第二轮：发送续跑词</span>
+          </div>
+          <span class="tag tag-green">快速路由触发</span>
+        </div>
+
+        <div style="font-size: 0.88rem; color: #cbd5e1;">
+          <strong>用户输入：</strong>
+          <span style="color: var(--success); font-weight: 700;">“继续”</span>
+          <span style="color: var(--text-muted); font-size: 0.8rem;">（严格匹配 _CONTINUATION_SIGNALS）</span>
+        </div>
+
+        <div class="flow-chain">
+          <div class="flow-node" style="border-color: var(--success);">
+            <div class="flow-node-title">
+              <span>1. 活跃检查：_active_agent_for_turn()</span>
+              <span class="tag tag-green">返回 "InfoAgent"</span>
+            </div>
+            <div class="flow-node-desc">
+              读取到上一轮保存的票据（未过期），且输入消息严格等于“继续” ➔ 判定为 <strong>TurnEntry.CONTINUE_ACTIVE</strong>！
+            </div>
+          </div>
+
+          <div class="arrow-down">↓</div>
+
+          <!-- 短路跳过展示 -->
+          <div class="bypass-box">
+            <span style="font-size: 1.4rem;">⚡</span>
+            <div>
+              <strong>短路截断（Bypassed）：</strong><br>
+              完全跳过 <code>_prepare_turn()</code>（零模型开销）！<br>
+              完全跳过 <code>GoGo 主协调 Agent</code>！
+            </div>
+          </div>
+
+          <div class="arrow-down">↓</div>
+
+          <div class="flow-node">
+            <div class="flow-node-title">
+              <span>2. 状态恢复：continue_turn()</span>
+              <span class="tag tag-purple">读取 AgentState</span>
+            </div>
+            <div class="flow-node-desc">从会话存储中反序列化加载 InfoAgent 上一轮对话记忆。</div>
+          </div>
+
+          <div class="arrow-down">↓</div>
+
+          <div class="flow-node" style="border-color: var(--success);">
+            <div class="flow-node-title">
+              <span>3. 直连推理：InfoAgent.reply("继续")</span>
+              <span class="tag tag-green">直接产出回答</span>
+            </div>
+            <div class="flow-node-desc">InfoAgent 带着历史状态直接理解“继续”并输出后续回答。</div>
+          </div>
+
+          <div class="arrow-down">↓</div>
+
+          <div class="flow-node">
+            <div class="flow-node-title">
+              <span>4. 消息保存与有效凭证刷新</span>
+              <span class="tag tag-green">agentName=InfoAgent</span>
+            </div>
+            <div class="flow-node-desc">
+              落库带有 <code>turn_entry="continue_active"</code> 标记；再次调用 <code>record_completed_agent()</code> 顺延 30 分钟有效期！
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- 第二部分：断点单步跟踪表 -->
+  <section class="section">
+    <div class="section-title">
+      <span>🐞</span>
+      <span>PyCharm 断点单步预期对照表（调试验收核心依据）</span>
+    </div>
+
+    <table class="bp-table">
+      <thead>
+        <tr>
+          <th style="width: 28%;">断点位置与代码符号</th>
+          <th style="width: 36%;">第一轮（提问时差）预期</th>
+          <th style="width: 36%;">第二轮（发送“继续”）预期</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>
+            <strong>_active_agent_for_turn()</strong><br>
+            <span class="file-loc">executor.py : line 287</span>
+          </td>
+          <td>
+            <span class="status-hit">● 命中</span> ➔ <code>active_name is None</code><br>
+            <small style="color: var(--text-muted);">初次提问无活跃路由记录</small>
+          </td>
+          <td>
+            <span class="status-hit">● 命中</span> ➔ <code>active_name == "InfoAgent"</code><br>
+            <small style="color: var(--text-muted);">选择进入 CONTINUE_ACTIVE 快速通道</small>
+          </td>
+        </tr>
+
+        <tr>
+          <td>
+            <strong>_prepare_turn()</strong><br>
+            <span class="file-loc">executor.py : line 335</span>
+          </td>
+          <td>
+            <span class="status-hit">● 命中 1 次</span><br>
+            <small style="color: var(--text-muted);">执行 L0 规则 / L1 / L2 / L3 意图流水线</small>
+          </td>
+          <td>
+            <span class="status-skip">✕ 绝对不命中</span><br>
+            <small style="color: var(--text-muted);">证明已成功短路跳过全部意图识别</small>
+          </td>
+        </tr>
+
+        <tr>
+          <td>
+            <strong>ask_info_agent()</strong><br>
+            <span class="file-loc">executor.py : line 191</span>
+          </td>
+          <td>
+            <span class="status-hit">● 必须命中 1 次</span><br>
+            <small style="color: var(--text-muted);">主 Agent 决定调用工具，为建立活跃奠定基础</small>
+          </td>
+          <td>
+            <span class="status-skip">✕ 绝对不命中</span><br>
+            <small style="color: var(--text-muted);">这轮直接调子 Agent，不经由主 Agent 工具</small>
+          </td>
+        </tr>
+
+        <tr>
+          <td>
+            <strong>record_completed_agent()</strong><br>
+            <span class="file-loc">continuation.py : line 123</span>
+          </td>
+          <td>
+            <span class="status-hit">● 命中 1 次</span><br>
+            <small style="color: var(--text-muted);">首轮工具完成且保存后，写入 30min 票据</small>
+          </td>
+          <td>
+            <span class="status-hit">● 命中 1 次</span><br>
+            <small style="color: var(--text-muted);">续跑成功后再次命中，重新刷新 30min 有效期</small>
+          </td>
+        </tr>
+
+        <tr>
+          <td>
+            <strong>continue_turn()</strong><br>
+            <span class="file-loc">continuation.py : line 137</span>
+          </td>
+          <td>
+            <span class="status-skip">✕ 不命中</span><br>
+            <small style="color: var(--text-muted);">首轮不走续跑</small>
+          </td>
+          <td>
+            <span class="status-hit">● 必须命中 1 次</span><br>
+            <small style="color: var(--text-muted);">加载上一轮 InfoAgent 的 AgentState 并 reply</small>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- 第三部分：关键防御与避坑机制 -->
+  <section class="section">
+    <div class="section-title">
+      <span>🛡️</span>
+      <span>三大关键防御与失效边界（为什么这样设计？）</span>
+    </div>
+
+    <div class="inspect-grid">
+      <div class="inspect-box">
+        <h4>1. 严格匹配续跑词（拒绝模糊匹配）</h4>
+        <p style="color: var(--text-muted);">源码定义了严格的词表 <code>_CONTINUATION_SIGNALS</code>（确定、继续、是的、好的等）。</p>
+        <div class="code-snip">
+          ✅ "继续" ➔ 命中快速续跑<br>
+          ❌ "继续介绍东京" ➔ 判定为普通句子，清除活跃票据，重新走完整流水线！
+        </div>
+      </div>
+
+      <div class="inspect-box">
+        <h4>2. 物理隔离的复合状态键</h4>
+        <p style="color: var(--text-muted);">避免不同用户同名会话发生碰撞或越权续跑：</p>
+        <div class="code-snip">
+          _key = f"{len(user_id)}:{user_id}:{session_id}"<br>
+          例: "4:u001:sess_123" ➔ 物理隔离保证绝对单射
+        </div>
+      </div>
+
+      <div class="inspect-box">
+        <h4>3. 30 分钟 TTL 自动过期防御</h4>
+        <p style="color: var(--text-muted);">活跃记录带有 <code>expires_at</code>。如果用户超过 30 分钟未交互，再次发送“继续”将自动检测为过期并清理，平滑回退到普通意图识别。</p>
+      </div>
+    </div>
+  </section>
+</div>
+</body>
+</html>

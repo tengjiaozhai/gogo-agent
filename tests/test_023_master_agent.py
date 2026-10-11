@@ -138,6 +138,10 @@ def master_http_case(monkeypatch):
             await model.client.close()
 
     executor = ChatAgentExecutor(history, InMemoryAgentSessionStore(), pipeline_factory=pipeline_factory)
+    async def no_recommendations(question, answer):
+        """023 fixture 只观测主/信息 Agent 的调用次数。"""
+        return []
+    monkeypatch.setattr(executor, "recommend_questions", no_recommendations)
     previous = dict(app.dependency_overrides)
     app.dependency_overrides[get_auth_service] = lambda: auth
     app.dependency_overrides[get_chat_executor] = lambda: executor
@@ -237,8 +241,8 @@ async def test_unregistered_tool_is_rejected_before_child_execution(master_http_
 
 
 @pytest.mark.asyncio
-async def test_non_info_intent_has_no_info_tool(master_http_case, monkeypatch):
-    """其他业务意图仍进入 GoGo，但不会获得信息子 Agent 工具。"""
+async def test_policy_intent_routes_only_to_manage_agent(master_http_case, monkeypatch):
+    """政策意图只注册管理 Agent，不暴露普通信息 Agent。"""
     _, _, executor = master_http_case
     monkeypatch.setattr(executor, "_build_model", lambda stream=False: _FallbackMockModel(stream=stream))
     request = executor._save_user_turn("session-023-policy", "u001", "查询差旅政策")
@@ -266,7 +270,8 @@ async def test_non_info_intent_has_no_info_tool(master_http_case, monkeypatch):
         tool_calls=[],
     )
     try:
-        assert await agent.toolkit.get_tool_schemas() == []
-        assert "本轮没有可调用的业务子智能体" in agent._system_prompt
+        schemas = await agent.toolkit.get_tool_schemas()
+        assert [item["function"]["name"] for item in schemas] == ["itinerary_manage_agent"]
+        assert "请调用 itinerary_manage_agent" in agent._system_prompt
     finally:
         await executor._close_agent_model(agent)

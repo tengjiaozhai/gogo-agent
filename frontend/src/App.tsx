@@ -4,11 +4,17 @@ import { fetchUserInfo } from './api/auth';
 import Sidebar from './components/Sidebar';
 import ChatWindow from './components/ChatWindow';
 import LoginPage from './components/LoginPage';
+import MyTravelPage from './components/MyTravelPage';
+import AdminApprovalPage from './components/AdminApprovalPage';
+import { useUiStore } from './store/uiStore';
 import './App.css';
 
 export default function App() {
   const { token, clearAuth, setIsAdmin } = useAuthStore();
   const isLoggedIn = useAuthStore((s) => s.isLoggedIn());
+  const view = useUiStore((s) => s.view);
+  const setView = useUiStore((s) => s.setView);
+  const resetView = useUiStore((s) => s.resetView);
 
   /**
    * 页面刺新/首次加载时，若 localStorage 存有 token，则立即对后端进行驗证。
@@ -39,6 +45,10 @@ export default function App() {
     if (token) validateToken();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // 仅在组件首次挂载（页面初始化/刷新）时运行一次
+
+  useEffect(() => {
+    if (!isLoggedIn) resetView();
+  }, [isLoggedIn, resetView]);
 
   // token 正在驗证中：返回空白屏避免闪现错误页面
   if (checking) return null;
@@ -75,8 +85,22 @@ export default function App() {
           onClick={() => setMobileSidebarOpen(false)}
         />
       )}
-      <Sidebar mobileOpen={mobileSidebarOpen} onClose={() => setMobileSidebarOpen(false)} />
-      <ChatWindow onOpenSidebar={() => setMobileSidebarOpen(true)} />
+      <Sidebar
+        view={view}
+        onNavigate={(nextView) => {
+          setView(nextView);
+          setMobileSidebarOpen(false);
+        }}
+        mobileOpen={mobileSidebarOpen}
+        onClose={() => setMobileSidebarOpen(false)}
+      />
+      {view === 'travel' ? (
+        <MyTravelPage onOpenSidebar={() => setMobileSidebarOpen(true)} />
+      ) : view === 'admin' ? (
+        <AdminApprovalPage onOpenSidebar={() => setMobileSidebarOpen(true)} />
+      ) : (
+        <ChatWindow onOpenSidebar={() => setMobileSidebarOpen(true)} />
+      )}
     </div>
   );
 }

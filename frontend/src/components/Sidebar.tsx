@@ -4,6 +4,7 @@ import { logout } from '../api/auth';
 import { fetchConversations, deleteConversation as deleteRemoteConversation } from '../api/chat';
 import type { Conversation } from '../store/chatStore';
 import { useEffect } from 'react';
+import type { AppView } from '../store/uiStore';
 
 function formatTime(ts: number) {
   const d = new Date(ts);
@@ -80,7 +81,17 @@ const emptyConversation = (): Conversation => ({
   isLoaded: false,
 });
 
-export default function Sidebar({ mobileOpen, onClose }: { mobileOpen: boolean; onClose: () => void }) {
+export default function Sidebar({
+  view,
+  onNavigate,
+  mobileOpen,
+  onClose,
+}: {
+  view: AppView;
+  onNavigate: (view: AppView) => void;
+  mobileOpen: boolean;
+  onClose: () => void;
+}) {
   const {
     conversations,
     currentConversationId,
@@ -90,7 +101,7 @@ export default function Sidebar({ mobileOpen, onClose }: { mobileOpen: boolean; 
     setConversations,
   } = useChatStore();
 
-  const { token, username, userId, clearAuth } = useAuthStore();
+  const { token, username, userId, isAdmin, clearAuth } = useAuthStore();
   const generating = conversations.some((conversation) => conversation.isThinking);
 
   useEffect(() => {
@@ -172,6 +183,7 @@ export default function Sidebar({ mobileOpen, onClose }: { mobileOpen: boolean; 
           className="new-chat-btn"
           onClick={() => {
             createConversation();
+            onNavigate('chat');
             onClose();
           }}
           disabled={generating}
@@ -189,11 +201,21 @@ export default function Sidebar({ mobileOpen, onClose }: { mobileOpen: boolean; 
         </button>
       </div>
 
-      {/* 当前 Python 后端已接入的对话入口。 */}
       <div className="sidebar-nav">
-        <button className="sidebar-nav-btn active" type="button">
+        <button className={`sidebar-nav-btn${view === 'chat' ? ' active' : ''}`} type="button"
+          onClick={() => onNavigate('chat')}>
           💬 对话助手
         </button>
+        <button className={`sidebar-nav-btn${view === 'travel' ? ' active' : ''}`} type="button"
+          onClick={() => onNavigate('travel')}>
+          💼 我的差旅
+        </button>
+        {isAdmin && (
+          <button className={`sidebar-nav-btn${view === 'admin' ? ' active' : ''}`} type="button"
+            onClick={() => onNavigate('admin')}>
+            📋 审批管理
+          </button>
+        )}
       </div>
 
       {/* Conversation list */}

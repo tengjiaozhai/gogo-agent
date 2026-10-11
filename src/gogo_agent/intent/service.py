@@ -107,7 +107,7 @@ async def _generate(
         tools=None,
         tool_choice=None,
         response_format={"type": "json_object"},
-        max_tokens=2048,
+        max_tokens=8192,
     )
     if not isinstance(response, ChatResponse) or not response.is_last:
         raise ModelOutputError(f"{result_type.__name__} 必须来自非流式最终响应")
