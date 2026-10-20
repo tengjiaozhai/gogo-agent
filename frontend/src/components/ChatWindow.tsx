@@ -164,6 +164,7 @@ export default function ChatWindow({ onOpenSidebar }: { onOpenSidebar: () => voi
     loadConversationMessages,
     addTimelineItem,
     updateTimelineTool,
+    updateTimelineAgent,
     appendTimelineThinking,
     setTimelinePlan,
     setMessageFeedback,
@@ -195,6 +196,7 @@ export default function ChatWindow({ onOpenSidebar }: { onOpenSidebar: () => voi
           timestamp: m.timestamp,
           feedback: m.feedback ?? null,
           feedbackAt: m.feedbackAt ?? undefined,
+          timeline: m.extra?.timeline,
         }));
         loadConversationMessages(currentConversationId, messages);
       })
@@ -293,6 +295,10 @@ export default function ChatWindow({ onOpenSidebar }: { onOpenSidebar: () => voi
           message: string;
           result?: string;
           arguments?: string;
+          status?: 'pending' | 'in-progress' | 'done' | 'error';
+          parentAgentName?: string;
+          thinkingAvailable?: boolean;
+          detail?: string;
         };
         try {
           progressData = JSON.parse(data);
@@ -304,7 +310,7 @@ export default function ChatWindow({ onOpenSidebar }: { onOpenSidebar: () => voi
         const step = {
           id: progressData.stepId,
           title: progressData.message,
-          status: (isDone ? 'done' : 'in-progress') as 'done' | 'in-progress',
+          status: progressData.status ?? (isDone ? 'done' : 'in-progress'),
           agentName: progressData.agentName,
           result: progressData.result,
           arguments: progressData.arguments,
@@ -314,7 +320,20 @@ export default function ChatWindow({ onOpenSidebar }: { onOpenSidebar: () => voi
         } catch {
           addProgressStep(step);
         }
-        if (progressData.type === 'tool_call') {
+        if (progressData.type === 'agent_start') {
+          if (!progressData.parentAgentName) setActiveAgent(progressData.agentName);
+          addTimelineItem({
+            kind: 'agent', id: progressData.stepId, agentName: progressData.agentName,
+            title: progressData.message, status: 'in-progress',
+            parentAgentName: progressData.parentAgentName, thinkingAvailable: false,
+            detail: progressData.detail,
+          });
+        } else if (progressData.type === 'agent_done') {
+          updateTimelineAgent(progressData.stepId, {
+            status: progressData.status === 'error' ? 'error' : 'done',
+            thinkingAvailable: progressData.thinkingAvailable ?? false,
+          });
+        } else if (progressData.type === 'tool_call') {
           addTimelineItem({
             kind: 'tool',
             id: progressData.stepId,
@@ -325,7 +344,7 @@ export default function ChatWindow({ onOpenSidebar }: { onOpenSidebar: () => voi
           });
         } else if (progressData.type === 'tool_done') {
           updateTimelineTool(progressData.stepId, {
-            status: 'done',
+            status: progressData.status ?? 'done',
             title: progressData.message,
             result: progressData.result,
           });
@@ -333,6 +352,8 @@ export default function ChatWindow({ onOpenSidebar }: { onOpenSidebar: () => voi
         break;
       }
       case 'error':
+        snapshotProgressToLastMessage();
+        clearProgress();
         addMessage({
           id: Math.random().toString(36).slice(2, 10),
           role: 'system',
@@ -537,7 +558,7 @@ export default function ChatWindow({ onOpenSidebar }: { onOpenSidebar: () => voi
         </div>
       </div>
 
-      <div className="chat-scope-note">当前开放基础对话与普通信息咨询；差旅申请、规划和预订仍在迁移中。</div>
+      <div className="chat-scope-note">可查看主子智能体的执行过程；行程规划只生成待确认方案。</div>
 
       {/* Message list */}
       <div className="message-list">

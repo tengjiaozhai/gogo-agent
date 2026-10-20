@@ -670,6 +670,11 @@ html, body {
 }
 
 .timeline-thinking-header {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font: inherit;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -696,15 +701,15 @@ html, body {
 }
 
 .timeline-thinking-agent {
-  font-size: 11px;
-  color: #9ca3af;
+  font-size: 12px;
+  color: #596273;
   flex-shrink: 0;
 }
 
 .timeline-thinking-preview {
   flex: 1;
   font-size: 11.5px;
-  color: #9ca3af;
+  color: #596273;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -729,7 +734,7 @@ html, body {
   border-top: 1px solid #e5e7eb;
   white-space: pre-wrap;
   word-break: break-word;
-  font-size: 11.5px;
+  font-size: 13px;
   line-height: 1.65;
   color: #6b7280;
   font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
@@ -746,6 +751,11 @@ html, body {
 }
 
 .timeline-tool-header {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font-family: inherit;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -759,7 +769,29 @@ html, body {
 }
 
 .timeline-tool-header.done {
-  color: #8c8c8c;
+  color: #596273;
+}
+
+.timeline-tool-header:disabled { opacity: 1; }
+.timeline-status.error, .timeline-error-label { color: #b42318; }
+.timeline-waiting-label { color: #89520b; }
+.timeline-tool-agent { color: #596273; font-size: 12px; }
+.timeline-tool-header.error { color: #b42318; }
+.timeline-agent { padding: 8px 0; }
+.timeline-agent.child { padding-inline-start: 16px; }
+.timeline-agent-heading { display: flex; align-items: center; gap: 8px; font-size: 14px; color: #344054; }
+.timeline-agent-heading > span:last-child { margin-inline-start: auto; color: #596273; font-size: 12px; }
+.timeline-agent-note, .timeline-routing { color: #596273; font-size: 12px; line-height: 1.6; margin: 4px 0 0 24px; overflow-wrap: anywhere; }
+.timeline-routing summary { cursor: pointer; }
+.timeline-answer-label { padding: 12px 16px 0; margin: 0; font-size: 13px; color: #596273; }
+.timeline-thinking-header:focus-visible, .timeline-tool-header:focus-visible, .timeline-routing summary:focus-visible {
+  outline: 2px solid #1677ff; outline-offset: 2px;
+}
+@media (max-width: 600px) {
+  .timeline-tool-header { flex-wrap: wrap; }
+  .timeline-tool-title { min-width: 0; overflow-wrap: anywhere; }
+  .timeline-tool-agent { display: none; }
+  .timeline-thinking-agent { flex-shrink: 1; }
 }
 
 .timeline-tool-header.clickable {

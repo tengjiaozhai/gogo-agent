@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import logging
 from inspect import isawaitable, signature, Parameter
 from typing import AsyncContextManager, AsyncGenerator, Callable, Optional
@@ -24,6 +25,12 @@ from gogo_agent.model import create_chat_model
 from gogo_agent.request_context import RequestContext, current_trace_id, trace_scope
 from gogo_agent.travel.dependencies import get_travel_service
 from gogo_agent.travel.tools import build_manage_toolkit
+from gogo_agent.integrations.tuniu import TuniuCliAdapter
+from gogo_agent.planning.agent import PLAN_AGENT_NAME as _PLAN_AGENT_LABEL, build_plan_agent
+from gogo_agent.planning.assessors import build_model_assessors
+from gogo_agent.planning.dependencies import get_plan_service
+from gogo_agent.planning.search import TuniuPlanSearch, build_tuniu_key_provider
+from gogo_agent.planning.tools import build_plan_toolkit
 
 from .continuation import ActiveAgentContinuation, InfoAgentContinuation, TurnEntry, choose_turn_entry
 from .config import (
@@ -36,6 +43,7 @@ from .repository import (
 )
 from .recommendation import generate_recommendations
 from .service import ChatHistoryService
+from .trace import ExecutionTrace
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +105,9 @@ class ChatAgentExecutor:
     INFO_TOOL_NAME = "info_agent"
     MANAGE_AGENT_NAME = "ItineraryManageAgent"
     MANAGE_TOOL_NAME = "itinerary_manage_agent"
+    PLAN_AGENT_NAME = _PLAN_AGENT_LABEL
+    PLAN_TOOL_NAME = "itinerary_plan_agent"
+    PLAN_INTENTS = frozenset({IntentCategory.ITINERARY_PLANNING})
     MANAGE_INTENTS = frozenset({
         IntentCategory.TRAVEL_APPLICATION, IntentCategory.TRAVEL_CANCEL,
         IntentCategory.TRAVEL_MODIFY, IntentCategory.APPROVAL_QUERY,
@@ -116,7 +127,7 @@ class ChatAgentExecutor:
         self._session_store = agent_session_store or create_agent_session_store()
         self._pipeline_factory = pipeline_factory
         self._active_continuation = active_continuation if active_continuation is not None else InfoAgentContinuation(
-            self._session_store, lambda request, state: self._build_info_agent(request, state), self._close_agent_model,
+            self._session_store, lambda request, state, trace=None: self._build_info_agent(request, state, trace=trace), self._close_agent_model,
             self._state_session_id, lambda: self._settings.info_tool_timeout_seconds,
         )
         self._settings = settings or load_chat_agent_settings()
@@ -132,7 +143,7 @@ class ChatAgentExecutor:
     def _build_model(self, stream: bool = False, *, role: str = "master"):
         """正式模型按角色选主/稳定模型；离线测试显式注入替身。"""
         settings = require_model_configuration()
-        if role not in ("master", "info", "manage", "recommendation"):
+        if role not in ("master", "info", "manage", "recommendation", "plan", "review"):
             raise ValueError("未知聊天模型角色")
         return create_chat_model(
             OpenAICredential(
@@ -140,7 +151,7 @@ class ChatAgentExecutor:
                 base_url=settings.base_url,
             ),
             (
-                settings.chat_model_name if role in ("master", "manage")
+                settings.chat_model_name if role in ("master", "manage", "plan")
                 else self._settings.recommendation_model_name if role == "recommendation"
                 else settings.stable_model_name
             ),
@@ -180,6 +191,7 @@ class ChatAgentExecutor:
         )
         self._session_store.delete_agent_state(state_session_id, agent_name=self.INFO_AGENT_NAME)
         self._session_store.delete_agent_state(state_session_id, agent_name=self.MANAGE_AGENT_NAME)
+        self._session_store.delete_agent_state(state_session_id, agent_name=self.PLAN_AGENT_NAME)
         self._session_store.delete_active_agent(state_session_id)
         self._session_store.delete_agent_state(session_id, agent_name=self.COORDINATOR_AGENT_NAME)
 
@@ -192,7 +204,7 @@ class ChatAgentExecutor:
             if isawaitable(closed):
                 await closed
 
-    def _build_info_agent(self, request: RequestContext, state: AgentState | None = None) -> Agent:
+    def _build_info_agent(self, request: RequestContext, state: AgentState | None = None, *, trace: ExecutionTrace | None = None) -> Agent:
         """为同一认证用户恢复只读 InfoAgent 状态，保留独立会话记忆。"""
         state_session_id = self._state_session_id(request.session_id, request.user_id)
         if state is None:
@@ -201,6 +213,7 @@ class ChatAgentExecutor:
             name=self.INFO_AGENT_NAME,
             system_prompt=INFO_SYSTEM_PROMPT,
             model=self._build_model(stream=False, role="info"),
+            middlewares=[trace] if trace is not None else None,
             state=state or AgentState(session_id=state_session_id),
             react_config=ReActConfig(
                 max_iters=self._settings.info_max_iters,
@@ -209,7 +222,7 @@ class ChatAgentExecutor:
             model_config=ModelConfig(max_retries=MODEL_MAX_RETRIES),
         )
 
-    def _build_manage_agent(self, request: RequestContext, state: AgentState | None = None) -> Agent:
+    def _build_manage_agent(self, request: RequestContext, state: AgentState | None = None, *, trace: ExecutionTrace | None = None) -> Agent:
         """以服务端认证身份创建管理 Agent，模型只看到受控工具 schema。"""
         state_session_id = self._state_session_id(request.session_id, request.user_id)
         if state is None:
@@ -218,6 +231,7 @@ class ChatAgentExecutor:
             name=self.MANAGE_AGENT_NAME,
             system_prompt=MANAGE_SYSTEM_PROMPT,
             model=self._build_model(stream=False, role="manage"),
+            middlewares=[trace] if trace is not None else None,
             toolkit=build_manage_toolkit(get_travel_service(), request),
             state=state or AgentState(session_id=state_session_id),
             react_config=ReActConfig(
@@ -226,6 +240,29 @@ class ChatAgentExecutor:
             ),
             model_config=ModelConfig(max_retries=MODEL_MAX_RETRIES),
         )
+
+    def _plan_search_call(self, user_id: str, conditions):
+        """途牛候选搜索只使用当前用户自己的 Key；未配置时返回明确失败。"""
+        adapter = TuniuCliAdapter(executable=os.getenv("GOGO_TUNIU_CLI", "tuniu").strip() or "tuniu")
+        return TuniuPlanSearch(adapter, build_tuniu_key_provider())(user_id, conditions)
+
+    def _build_plan_agent(self, request: RequestContext, state: AgentState | None = None, *, trace: ExecutionTrace | None = None) -> tuple[Agent, object]:
+        """规划 Agent 与其审核模型；审核模型使用稳定模型角色，调用方负责关闭。"""
+        state_session_id = self._state_session_id(request.session_id, request.user_id)
+        if state is None:
+            state = self._session_store.load_agent_state(state_session_id, agent_name=self.PLAN_AGENT_NAME)
+        review_model = self._build_model(stream=False, role="review")
+        toolkit = build_plan_toolkit(
+            get_plan_service(), request,
+            search_provider=self._plan_search_call,
+            assessors=build_model_assessors(review_model),
+        )
+        agent = build_plan_agent(
+            model=self._build_model(stream=False, role="plan"), toolkit=toolkit,
+            state=state or AgentState(session_id=state_session_id),
+            middlewares=[trace] if trace is not None else None,
+        )
+        return agent, review_model
 
     def _build_agent(
         self,
@@ -236,6 +273,8 @@ class ChatAgentExecutor:
         stream: bool = False,
         info_states: list[AgentState] | None = None,
         manage_states: list[AgentState] | None = None,
+        plan_states: list[AgentState] | None = None,
+        trace: ExecutionTrace | None = None,
     ) -> Agent:
         """用识别结果决定本轮可见工具；身份仍从可信请求参数传入。"""
         model = self._build_model(stream=stream)
@@ -243,6 +282,7 @@ class ChatAgentExecutor:
         tools: list[FunctionTool] = []
         has_info = any(item.intent == IntentCategory.GENERAL_INFO for item in prepared.decision.result.intents)
         has_manage = any(item.intent in self.MANAGE_INTENTS for item in prepared.decision.result.intents)
+        has_plan = any(item.intent in self.PLAN_INTENTS for item in prepared.decision.result.intents)
         if has_info:
             async def ask_info_agent(question: str) -> str:
                 """委派普通公共信息问题给只读 InfoAgent，再返回其回答。"""
@@ -250,7 +290,7 @@ class ChatAgentExecutor:
                 status = "failed"
                 error_type: str | None = None
                 try:
-                    child = self._build_info_agent(request)
+                    child = self._build_info_agent(request, trace=trace)
                     async with asyncio.timeout(self._settings.info_tool_timeout_seconds) as deadline:
                         reply = await child.reply(UserMsg(name=self.COORDINATOR_AGENT_NAME, content=question))
                     if deadline.expired():
@@ -299,7 +339,7 @@ class ChatAgentExecutor:
                 status = "failed"
                 error_type: str | None = None
                 try:
-                    child = self._build_manage_agent(request)
+                    child = self._build_manage_agent(request, trace=trace)
                     async with asyncio.timeout(self._settings.manage_tool_timeout_seconds) as deadline:
                         reply = await child.reply(UserMsg(name=self.COORDINATOR_AGENT_NAME, content=question))
                     if deadline.expired():
@@ -341,11 +381,69 @@ class ChatAgentExecutor:
                     message="允许受控差旅管理查询和待确认建议",
                 ),
             ))
+        if has_plan:
+            async def ask_plan_agent(question: str) -> str:
+                """委派行程规划诉求；候选、方案与审核只形成待确认结果，不预订、不提交差旅单。"""
+                child: Agent | None = None
+                review_model: object | None = None
+                status = "failed"
+                error_type: str | None = None
+                try:
+                    child, review_model = self._build_plan_agent(request, trace=trace)
+                    async with asyncio.timeout(self._settings.plan_tool_timeout_seconds) as deadline:
+                        reply = await child.reply(UserMsg(name=self.COORDINATOR_AGENT_NAME, content=question))
+                    if deadline.expired():
+                        raise TimeoutError("行程规划 Agent 工具调用超时")
+                    task = asyncio.current_task()
+                    if task is not None and task.cancelling():
+                        raise asyncio.CancelledError
+                    if reply.finished_reason != ReplyFinishedReason.COMPLETED:
+                        raise RuntimeError(f"PlanAgent finished with {reply.finished_reason}")
+                    answer = reply.get_text_content() or ""
+                    if not answer.strip():
+                        raise ValueError("行程规划 Agent 没有返回可用回答")
+                    if plan_states is not None:
+                        plan_states.append(child.state)
+                    status = "completed"
+                    return answer
+                except BaseException as exc:
+                    error_type = type(exc).__name__
+                    raise
+                finally:
+                    record = {
+                        "tool_name": self.PLAN_TOOL_NAME,
+                        "agent_name": self.PLAN_AGENT_NAME,
+                        "status": status,
+                        "trace_id": request.trace_id,
+                    }
+                    if error_type:
+                        record["error_type"] = error_type
+                    tool_calls.append(record)
+                    await self._close_agent_model(child)
+                    if review_model is not None:
+                        review_client = getattr(review_model, "client", None)
+                        if review_client is not None:
+                            closed = review_client.close()
+                            if isawaitable(closed):
+                                await closed
+
+            tools.append(FunctionTool(
+                ask_plan_agent,
+                name=self.PLAN_TOOL_NAME,
+                is_read_only=False,
+                is_concurrency_safe=False,
+                permission=PermissionDecision(
+                    behavior=PermissionBehavior.ALLOW,
+                    message="允许受控行程规划，不包含预订或差旅单提交",
+                ),
+            ))
         toolkit = Toolkit(tools=tools) if tools else None
         return Agent(
             name=self.COORDINATOR_AGENT_NAME,
+            middlewares=[trace] if trace is not None else None,
             system_prompt=master_system_prompt(
                 intents, info_tool_enabled=has_info, manage_tool_enabled=has_manage,
+                plan_tool_enabled=has_plan,
             ),
             model=model,
             toolkit=toolkit,
@@ -367,6 +465,8 @@ class ChatAgentExecutor:
         stream: bool,
         info_states: list[AgentState],
         manage_states: list[AgentState],
+        plan_states: list[AgentState] | None = None,
+        trace: ExecutionTrace | None = None,
     ) -> Agent:
         """保留 020–026 测试替身的旧签名，同时让正式入口收集 Info 状态。"""
         parameter_map = signature(self._build_agent).parameters
@@ -385,6 +485,10 @@ class ChatAgentExecutor:
             kwargs["info_states"] = info_states
         if "manage_states" in parameter_map or accepts_extra:
             kwargs["manage_states"] = manage_states
+        if "plan_states" in parameter_map or accepts_extra:
+            kwargs["plan_states"] = plan_states if plan_states is not None else []
+        if "trace" in parameter_map or accepts_extra:
+            kwargs["trace"] = trace
         return self._build_agent(**kwargs)
 
     def _save_user_turn(self, session_id: str, user_id: str, message: str) -> RequestContext:
@@ -410,12 +514,12 @@ class ChatAgentExecutor:
         return active_name if entry is TurnEntry.CONTINUE_ACTIVE else None
 
     async def _continue_active_turn(
-        self, request: RequestContext, agent_name: str, message: str,
+        self, request: RequestContext, agent_name: str, message: str, trace: ExecutionTrace | None = None,
     ) -> tuple[str, str]:
         """把可信会话参数交给已注册活跃 Agent，统一保存其真实回复。"""
         try:
             result = await self._active_continuation.continue_turn(
-                request, agent_name, QueryInput(question=message),
+                request, agent_name, QueryInput(question=message), trace=trace,
             )
             if not isinstance(result.text, str) or not result.text.strip():
                 raise ValueError("活跃 Agent 没有返回可保存的回复")
@@ -430,6 +534,7 @@ class ChatAgentExecutor:
                     "active_agent": agent_name,
                     "request_id": request.request_id,
                     "trace_id": request.trace_id,
+                    "timeline": trace.timeline if trace is not None else [],
                 },
             )
             if result.state is not None:
@@ -458,6 +563,7 @@ class ChatAgentExecutor:
     def _pipeline_extra(
         self, prepared: PreparedIntentTurn, request: RequestContext,
         tool_calls: list[dict[str, str]] | None = None,
+        trace: ExecutionTrace | None = None,
     ) -> dict:
         """保存可调试层级与分支，不保存密钥、原始模型响应或可信身份。"""
         decision = prepared.decision
@@ -473,6 +579,8 @@ class ChatAgentExecutor:
         }}
         if tool_calls is not None:
             extra["tool_calls"] = tool_calls
+        if trace is not None:
+            extra["timeline"] = trace.timeline
         return extra
 
     @staticmethod
@@ -516,7 +624,9 @@ class ChatAgentExecutor:
             logger.info("chat turn started", extra={"trace_id": current_trace_id()})
             active_name = self._active_agent_for_turn(request, message)
             if active_name is not None:
-                return await self._continue_active_turn(request, active_name, message)
+                return await self._continue_active_turn(
+                    request, active_name, message, ExecutionTrace(root_agent=active_name),
+                )
             prepared = await self._prepare_turn(request)
             if prepared.branch == "needs_context":
                 text = self._clarification(prepared)
@@ -532,6 +642,8 @@ class ChatAgentExecutor:
             tool_calls: list[dict[str, str]] = []
             info_states: list[AgentState] = []
             manage_states: list[AgentState] = []
+            plan_states: list[AgentState] = []
+            trace = ExecutionTrace(intent=self._pipeline_extra(prepared, request)["intent_pipeline"])
             try:
                 agent_state = self._session_store.load_agent_state(
                     state_session_id, agent_name=self.COORDINATOR_AGENT_NAME,
@@ -543,7 +655,8 @@ class ChatAgentExecutor:
                 agent = self._build_agent_for_turn(
                     state=agent_state, prepared=prepared, request=request,
                     tool_calls=tool_calls, stream=False, info_states=info_states,
-                    manage_states=manage_states,
+                    manage_states=manage_states, plan_states=plan_states,
+                    trace=trace,
                 )
                 reply_msg = await agent.reply(UserMsg(name="user", content=prepared.effective_question.question))
             except Exception as exc:
@@ -566,7 +679,7 @@ class ChatAgentExecutor:
                 user_id=request.user_id,
                 content=reply_text,
                 agent_name=self.COORDINATOR_AGENT_NAME,
-                extra=self._pipeline_extra(prepared, request, tool_calls),
+                extra=self._pipeline_extra(prepared, request, tool_calls, trace),
             )
 
             # 可见回复成功保存后才提交 AgentState；失败轮次不推进子 Agent 记忆。
@@ -577,6 +690,10 @@ class ChatAgentExecutor:
             if manage_states:
                 self._session_store.save_agent_state(
                     state_session_id, manage_states[-1], agent_name=self.MANAGE_AGENT_NAME,
+                )
+            if plan_states:
+                self._session_store.save_agent_state(
+                    state_session_id, plan_states[-1], agent_name=self.PLAN_AGENT_NAME,
                 )
             self._session_store.save_agent_state(
                 state_session_id, agent.state, agent_name=self.COORDINATOR_AGENT_NAME,
@@ -606,11 +723,15 @@ class ChatAgentExecutor:
             logger.info("chat stream prepared", extra={"trace_id": current_trace_id()})
             active_name = self._active_agent_for_turn(request, message)
             if active_name is not None:
-                text, msg_id = await self._continue_active_turn(
-                    request, active_name, message,
-                )
+                trace = ExecutionTrace(root_agent=active_name, streaming=True)
 
                 async def continuation_events() -> AsyncGenerator[str, None]:
+                    try:
+                        text, msg_id = await self._continue_active_turn(request, active_name, message, trace)
+                    except HTTPException as exc:
+                        yield f"event: error\ndata: {exc.detail}\n\n"
+                        return
+                    yield f"event: agent-switch\ndata: {active_name}\n\n"
                     data_lines = "\n".join(f"data: {line}" for line in text.split("\n"))
                     yield f"event: message\n{data_lines}\n\n"
                     yield f"event: message_id\ndata: {msg_id}\n\n"
@@ -618,7 +739,7 @@ class ChatAgentExecutor:
                     if suggestions:
                         yield "event: suggestions\ndata: " + json.dumps(suggestions, ensure_ascii=False) + "\n\n"
 
-                return self._traced_stream(request, continuation_events())
+                return self._traced_stream(request, trace.stream(continuation_events()))
             prepared = await self._prepare_turn(request)
             if prepared.branch == "needs_context":
                 text = self._clarification(prepared)
@@ -634,7 +755,8 @@ class ChatAgentExecutor:
                     yield f"event: message_id\ndata: {msg_id}\n\n"
 
                 return self._traced_stream(request, clarification_events())
-            return self._traced_stream(request, self._stream_prepared_turn(request, prepared))
+            trace = ExecutionTrace(streaming=True, intent=self._pipeline_extra(prepared, request)["intent_pipeline"])
+            return self._traced_stream(request, trace.stream(self._stream_prepared_turn(request, prepared, trace)))
 
     @staticmethod
     async def _traced_stream(
@@ -654,7 +776,7 @@ class ChatAgentExecutor:
                 await events.aclose()
 
     async def _stream_prepared_turn(
-        self, request: RequestContext, prepared: PreparedIntentTurn,
+        self, request: RequestContext, prepared: PreparedIntentTurn, trace: ExecutionTrace,
     ) -> AsyncGenerator[str, None]:
         """只在预处理成功后执行 Agent，保留 005 的 message/message_id 事件。"""
         logger.info("chat stream started", extra={"trace_id": current_trace_id()})
@@ -666,6 +788,7 @@ class ChatAgentExecutor:
         tool_calls: list[dict[str, str]] = []
         info_states: list[AgentState] = []
         manage_states: list[AgentState] = []
+        plan_states: list[AgentState] = []
         final_reason: ReplyFinishedReason | None = None
 
         try:
@@ -679,7 +802,8 @@ class ChatAgentExecutor:
             agent = self._build_agent_for_turn(
                 state=agent_state, prepared=prepared, request=request,
                 tool_calls=tool_calls, stream=True, info_states=info_states,
-                manage_states=manage_states,
+                manage_states=manage_states, plan_states=plan_states,
+                trace=trace,
             )
             async for event in agent.reply_stream(
                 UserMsg(name="user", content=prepared.effective_question.question),
@@ -726,7 +850,7 @@ class ChatAgentExecutor:
                 user_id=request.user_id,
                 content=full_reply_text,
                 agent_name=self.COORDINATOR_AGENT_NAME,
-                extra=self._pipeline_extra(prepared, request, tool_calls),
+                extra=self._pipeline_extra(prepared, request, tool_calls, trace),
             )
 
             # 再提交本轮 AgentState；若失败，SSE 不报完成。
@@ -737,6 +861,10 @@ class ChatAgentExecutor:
             if manage_states:
                 self._session_store.save_agent_state(
                     state_session_id, manage_states[-1], agent_name=self.MANAGE_AGENT_NAME,
+                )
+            if plan_states:
+                self._session_store.save_agent_state(
+                    state_session_id, plan_states[-1], agent_name=self.PLAN_AGENT_NAME,
                 )
             self._session_store.save_agent_state(
                 state_session_id, agent.state, agent_name=self.COORDINATOR_AGENT_NAME,

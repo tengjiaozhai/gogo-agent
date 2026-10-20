@@ -60,7 +60,7 @@ Scalar 是独立站点，不会自动使用 `5174` 页面 Local Storage 的 Toke
 
 在 `5174` 页面按 F12：Network 选择 Fetch/XHR，打开 **Preserve log**；发送消息后点 `POST /api/chat/{sessionId}`，查看 Request Payload 的 `message`、Request Headers 的 `Accept: text/event-stream`、Response/EventStream 中的 `message`、`message_id`，以及可选的 `suggestions`。登录时可看 `POST /api/auth/login`、`GET /api/auth/info`；历史和反馈会产生 `GET /api/chat/conversations`、`GET /api/chat/{sessionId}/messages`、`PUT .../feedback`。`Application → Local Storage → 5174 → gogo-auth` 是前端本地登录态；只观察，不复制 token 给 AI。
 
-SSE 目前**不逐条展示管理工具调用**。要确认模型是否真的调用了 `itinerary_manage_agent`，在 Scalar 用同一会话 ID 调 `GET /api/chat/{sessionId}/messages`，找到本轮助手消息的 `extra.tool_calls` 和 `extra.intent_pipeline`；切换历史会话时若 Network 出现这个 GET，也可直接看原始 JSON。用 `trace_id` 对照 PyCharm 控制台的日志。模型调用日志会显示 `role=master/manage/info/recommendation`、耗时与可用 token，但不记录对话正文。
+SSE 现已通过 `thinking/progress` 展示真实主子 Agent 与工具调用，可展开参数、结果和模型实际返回的思考；没有思考内容时明确提示。成功保存后从 `extra.timeline` 回放，详见[执行过程时间轴调试指南](执行过程时间轴-调试指南.md)。要核对模型是否真的调用了 `itinerary_manage_agent`，仍可在 Scalar 用同一会话 ID 调 `GET /api/chat/{sessionId}/messages`，查看本轮助手消息的 `extra.tool_calls` 和 `extra.intent_pipeline`。用 `trace_id` 对照 PyCharm 控制台日志；模型调用日志记录角色、耗时与 token，不记录对话正文。
 
 浏览器的 `sessionId`、`messageId`、`order_id`、`approval_id`、Token 与追踪号每次会变。把本轮 `order_id`/`approval_id` 临时记在本地笔记，用于下一步；别把它们当固定样例值。脚本演示的 `--case all` 每项重建内存库，浏览器练习库则会持续保留前一操作的状态。
 

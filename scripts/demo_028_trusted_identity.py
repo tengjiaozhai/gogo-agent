@@ -84,9 +84,9 @@ def tool_case() -> None:
     captured = []
     original_build_info = executor._build_info_agent
 
-    def build_info(request, state=None):
+    def build_info(request, state=None, *, trace=None):
         captured.append(request)
-        return original_build_info(request, state)
+        return original_build_info(request, state, trace=trace)
 
     executor._build_info_agent = build_info
 

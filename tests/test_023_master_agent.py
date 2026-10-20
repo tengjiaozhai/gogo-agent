@@ -165,9 +165,9 @@ def test_http_master_calls_registered_read_only_info_agent_and_records_result(
     child_requests = []
     original_build_info = executor._build_info_agent
 
-    def build_info(request):
+    def build_info(request, *, trace=None):
         child_requests.append(request)
-        agent = original_build_info(request)
+        agent = original_build_info(request, trace=trace)
         assert agent.name == "InfoAgent"
         return agent
 

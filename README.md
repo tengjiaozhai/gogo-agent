@@ -4,6 +4,8 @@
 
 React 前端已提前迁入 [`frontend/`](frontend/README.md)，当前接入登录、会话历史、基础聊天、我的差旅和管理员审批。已迁移范围与后续接口见[前端迁移记录](docs/迁移/前端提前迁移.md)。从浏览器学习 029–041 时，按[前端与 Scalar 逐步调试指南](docs/契约样例/阶段D-前端与Scalar逐步调试.md)创建独立练习库。
 
+聊天页已复用 Java 的执行时间轴，展示主子委派、实际思考与可展开的工具参数/结果，支持历史回放。隔离演示与断点见[执行过程时间轴调试指南](docs/契约样例/执行过程时间轴-调试指南.md)。
+
 ## 环境与启动
 
 安装 [uv](https://docs.astral.sh/uv/) 后，在仓库根目录运行一条命令。`uv run` 会创建 Python 3.12 环境、按 `uv.lock` 安装依赖并启动本地检查：
@@ -35,10 +37,10 @@ uv run --locked gogo-agent
 ## HTTP 健康检查与测试
 
 ```sh
-uv run --locked uvicorn gogo_agent.api:app --host 127.0.0.1 --port 8000
+uv run --locked uvicorn gogo_agent.api:app --host 127.0.0.1 --port 8080
 ```
 
-启动前须在 `.env` 填写 `GOGO_MODEL_API_KEY`、`GOGO_MODEL_NAME` 和 `GOGO_MODEL_BASE_URL`；缺项会使 API 启动失败，错误只列配置名。显式设置空白 `GOGO_STABLE_MODEL_NAME` 也会启动失败。主/信息/管理 Agent 的轮次与超时可按 `.env.example` 调整。访问 `http://127.0.0.1:8000/health` 得到 `status` 和 AgentScope 版本；它不发起模型网关探测。仅检查本地安装时仍可执行 `uv run --locked gogo-agent --health`，无需模型凭证。配置与错误出口见[024 记录](docs/契约样例/024-Agent关键配置与失败出口.md)。
+启动前须在 `.env` 填写 `GOGO_MODEL_API_KEY`、`GOGO_MODEL_NAME` 和 `GOGO_MODEL_BASE_URL`；缺项会使 API 启动失败，错误只列配置名。显式设置空白 `GOGO_STABLE_MODEL_NAME` 也会启动失败。主/信息/管理 Agent 的轮次与超时可按 `.env.example` 调整。访问 `http://127.0.0.1:8080/health` 得到 `status` 和 AgentScope 版本；它不发起模型网关探测。仅检查本地安装时仍可执行 `uv run --locked gogo-agent --health`，无需模型凭证。配置与错误出口见[024 记录](docs/契约样例/024-Agent关键配置与失败出口.md)。
 
 ```sh
 uv run --locked pytest -q tests/test_001.py

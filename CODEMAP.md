@@ -41,7 +41,7 @@
 
 - [`frontend/src/api/auth.ts`](frontend/src/api/auth.ts) — 调用 Python 登录、登出和当前用户接口。
 - [`frontend/src/api/admin.ts`](frontend/src/api/admin.ts) — 调用 Python 管理员审批接口并将 snake_case 审批响应转换为页面契约。
-- [`frontend/src/api/chat.ts`](frontend/src/api/chat.ts) — 调用会话与反馈接口并解析基础聊天 SSE。
+- [`frontend/src/api/chat.ts`](frontend/src/api/chat.ts) — 调用会话与反馈接口，解析聊天 SSE 并携带历史执行时间轴。
 - [`frontend/src/api/config.ts`](frontend/src/api/config.ts) — 选择同源或显式配置的 API 地址。
 - [`frontend/src/api/request.ts`](frontend/src/api/request.ts) — 提供阶段 D 页面共用的带认证 JSON 请求和 HTTP 错误类型。
 - [`frontend/src/api/time.ts`](frontend/src/api/time.ts) — 将 Python 无时区 UTC ISO 时间转换为浏览器时间戳。
@@ -49,10 +49,10 @@
 
 ## frontend/src/components
 
-- [`frontend/src/components/AgentMessageBlock.tsx`](frontend/src/components/AgentMessageBlock.tsx) — 渲染 Markdown 回复、反馈与后续丰富事件的消息区。
+- [`frontend/src/components/AgentMessageBlock.tsx`](frontend/src/components/AgentMessageBlock.tsx) — 渲染思考、主子委派、可展开工具详情、执行状态及 Markdown 回复与反馈。
 - [`frontend/src/components/AdminApprovalPage.tsx`](frontend/src/components/AdminApprovalPage.tsx) — 提供管理员审批筛选、详情、备注、同意和拒绝页面。
 - [`frontend/src/components/BookingResultCard.tsx`](frontend/src/components/BookingResultCard.tsx) — 定义后续预订结果卡片展示。
-- [`frontend/src/components/ChatWindow.tsx`](frontend/src/components/ChatWindow.tsx) — 渲染会话历史、基础 SSE 回复与反馈，并在离开页面时终止旧流。
+- [`frontend/src/components/ChatWindow.tsx`](frontend/src/components/ChatWindow.tsx) — 连接聊天 SSE、执行事件与历史时间轴，处理反馈并在离开页面时终止旧流。
 - [`frontend/src/components/LoginPage.tsx`](frontend/src/components/LoginPage.tsx) — 登录并加载服务端用户身份。
 - [`frontend/src/components/MyTravelPage.tsx`](frontend/src/components/MyTravelPage.tsx) — 提供本人差旅列表、审批历史、预订记录和确认后的申请、修改、取消操作。
 - [`frontend/src/components/ProgressCard.tsx`](frontend/src/components/ProgressCard.tsx) — 定义后续 Agent 规划步骤的卡片展示。
@@ -97,6 +97,7 @@
 - [`src/gogo_agent/chat/repository.py`](src/gogo_agent/chat/repository.py) — 实现内存与 SQL 的业务历史、AgentState 与活跃路由记录存取，并处理已删除会话 ID 的重新归属。
 - [`src/gogo_agent/chat/service.py`](src/gogo_agent/chat/service.py) — 编排会话创建、归属校验后的历史读取和用户消息保存、标题及反馈。
 - [`src/gogo_agent/chat/executor.py`](src/gogo_agent/chat/executor.py) — 按可信请求运行主/信息/管理 Agent 与活跃续聊，处理 JSON/SSE、推荐及状态记录。
+- [`src/gogo_agent/chat/trace.py`](src/gogo_agent/chat/trace.py) — 观察真实主子 Agent 事件，脱敏后生成可回放时间轴并以有界队列合并 SSE。
 - [`src/gogo_agent/chat/recommendation.py`](src/gogo_agent/chat/recommendation.py) — 在主答复完成后解析并去重轻量模型生成的后续问题建议。
 - [`src/gogo_agent/chat/dependencies.py`](src/gogo_agent/chat/dependencies.py) — 提供会话仓储、L2 记忆库与执行器的 FastAPI 依赖注入。
 - [`src/gogo_agent/chat/router.py`](src/gogo_agent/chat/router.py) — 定义 /api/chat 的会话接口，并在 SSE 建立前完成对话预处理。
@@ -138,6 +139,54 @@
 - [`src/gogo_agent/travel/conflict.py`](src/gogo_agent/travel/conflict.py) — 检测本人行程的日期重叠、跨城衔接和未知交通时长。
 - [`src/gogo_agent/travel/cache.py`](src/gogo_agent/travel/cache.py) — 缓存按用户、参数、版本和日期隔离的短时政策查询结果。
 
+## src/gogo_agent/planning
+
+- [`src/gogo_agent/planning/__init__.py`](src/gogo_agent/planning/__init__.py) — 标记阶段 E 行程规划包。
+- [`src/gogo_agent/planning/models.py`](src/gogo_agent/planning/models.py) — 定义交通与酒店候选、政策、方案、审核结论及带版本的计划状态契约。
+- [`src/gogo_agent/planning/scoring.py`](src/gogo_agent/planning/scoring.py) — 确定性地组合去程、住宿、返程，过滤、归一化评分并选出代表方案，不读写存储。
+- [`src/gogo_agent/planning/steps.py`](src/gogo_agent/planning/steps.py) — 维护 Plan-and-Execute 步骤状态、失败次数、条件变化失效与已确认写入去重。
+- [`src/gogo_agent/planning/review.py`](src/gogo_agent/planning/review.py) — 执行客观六维审核、有限次主观评估、确定性仲裁，并把结论绑定计划内容版本。
+- [`src/gogo_agent/planning/service.py`](src/gogo_agent/planning/service.py) — 编排计划创建、搜索、计算、审核与版本递增，所有操作限定于本人计划。
+- [`src/gogo_agent/planning/store.py`](src/gogo_agent/planning/store.py) — 以用户与计划标识隔离保存计划快照，并用版本号拒绝并发覆盖。
+- [`src/gogo_agent/planning/tools.py`](src/gogo_agent/planning/tools.py) — 为规划智能体装配只读候选、计算、审核工具，身份只来自服务端上下文。
+- [`src/gogo_agent/planning/agent.py`](src/gogo_agent/planning/agent.py) — 组装行程规划 Agent 与其系统提示词，不包含差旅单写入或供应商下单工具。
+- [`src/gogo_agent/planning/simulated.py`](src/gogo_agent/planning/simulated.py) — 提供固定模拟候选、模拟政策与确定性主观评估替身，仅用于练习和测试。
+- [`src/gogo_agent/planning/search.py`](src/gogo_agent/planning/search.py) — 经途牛 CLI 只读搜索去程、返程与目的地酒店，只使用当前用户自己的 API Key，缺 Key 或搜索失败时显式报错。
+- [`src/gogo_agent/planning/assessors.py`](src/gogo_agent/planning/assessors.py) — 053 的三个主观评估器：通过稳定模型角色各调用一次模型，输出结构化结论，无效输出记为不可用。
+- [`src/gogo_agent/planning/dependencies.py`](src/gogo_agent/planning/dependencies.py) — 提供进程内唯一的规划服务，计划记录目前只在内存中保存。
+
+## src/gogo_agent/booking
+
+- [`src/gogo_agent/booking/__init__.py`](src/gogo_agent/booking/__init__.py) — 标记阶段 F 预订与工具可靠性包。
+- [`src/gogo_agent/booking/service.py`](src/gogo_agent/booking/service.py) — 作为唯一下单入口，执行审核、差旅审批、同行程段唯一与幂等门禁，并处理未知结果与酒店取消顺序。
+- [`src/gogo_agent/booking/supplier.py`](src/gogo_agent/booking/supplier.py) — 定义供应商下单、查询与取消接口，提供可脚本化的模拟供应商和接入阶段 D 取消的适配器。
+- [`src/gogo_agent/booking/reliability.py`](src/gogo_agent/booking/reliability.py) — 提供只读重试、写入不重试、有界并行搜索与按工具名套用的熔断状态机。
+- [`src/gogo_agent/booking/tools.py`](src/gogo_agent/booking/tools.py) — 为预订 Agent 装配门禁检查与只读查询工具，不包含下单或取消工具。
+- [`src/gogo_agent/booking/agent.py`](src/gogo_agent/booking/agent.py) — 组装预订 Agent 与其系统提示词，限定其不能自行下单或修改审核结论。
+
+## src/gogo_agent/integrations
+
+- [`src/gogo_agent/integrations/__init__.py`](src/gogo_agent/integrations/__init__.py) — 说明阶段 E 外部能力包：安全运行外部 CLI、途牛只读搜索、实时查询、天气 MCP 与能力清单。
+- [`src/gogo_agent/integrations/skill_runner.py`](src/gogo_agent/integrations/skill_runner.py) — 以参数列表安全运行外部 CLI，执行命令白名单、输出与超时限制、用户隔离目录、环境变量白名单和密钥屏蔽。
+- [`src/gogo_agent/integrations/tuniu.py`](src/gogo_agent/integrations/tuniu.py) — 通过安全运行器做途牛机票、火车、酒店只读搜索，并规范化为规划候选；拒绝所有下单与取消命令。
+- [`src/gogo_agent/integrations/destination_live.py`](src/gogo_agent/integrations/destination_live.py) — 提供目的地实时查询的客户端、带来源与有效期的返回结构，以及区分查到数据与未验证信息的文本渲染。
+- [`src/gogo_agent/integrations/weather_mcp.py`](src/gogo_agent/integrations/weather_mcp.py) — 用 AgentScope `MCPClient` 封装天气 MCP 的连接生命周期、工具发现、调用与错误转换。
+- [`src/gogo_agent/integrations/catalog.py`](src/gogo_agent/integrations/catalog.py) — 记录 Java 当前启用的旅行 Skill 与 MCP 能力清单，标明是否迁移、只读或写入及凭证类型，并校验每个行为只有一个权威入口。
+
+## src/gogo_agent/security
+
+- [`src/gogo_agent/security/__init__.py`](src/gogo_agent/security/__init__.py) — 说明阶段 E 凭证与第三方鉴权包的边界：凭证不进入提示词、日志、工具响应或模型上下文。
+- [`src/gogo_agent/security/errors.py`](src/gogo_agent/security/errors.py) — 定义凭证相关稳定错误码，文本固定且不含密钥、密文或 Token。
+- [`src/gogo_agent/security/masking.py`](src/gogo_agent/security/masking.py) — 对输出、日志和异常文本做最小必要脱敏，并提供日志过滤器。
+- [`src/gogo_agent/security/cipher.py`](src/gogo_agent/security/cipher.py) — 以 AES-256-GCM 加密凭证，密文带密钥版本，从环境变量读取多密钥并支持轮换；缺失密钥时明确失败。
+- [`src/gogo_agent/security/apikey.py`](src/gogo_agent/security/apikey.py) — 管理用户级第三方 API Key：仅本人可增删查，列表脱敏，撤销后旧 Key 不再可取用。
+- [`src/gogo_agent/security/credentials.py`](src/gogo_agent/security/credentials.py) — 记录各集成的凭证持有者、资源与撤销方式，决定每次供应商请求使用谁的授权且不回退。
+- [`src/gogo_agent/security/token_header.py`](src/gogo_agent/security/token_header.py) — 从服务端读取配置型 Token，仅在请求目标供应商域名时注入请求头，缺失或跨域时在发出前失败。
+- [`src/gogo_agent/security/pkce.py`](src/gogo_agent/security/pkce.py) — 提供 PKCE 与一次性 state 的教学练习，含模拟授权方和模拟 CLI，不是生产登录实现。
+- [`src/gogo_agent/security/exercises/__init__.py`](src/gogo_agent/security/exercises/__init__.py) — 标记 050/051 独立练习包，练习不接入正式规划路径。
+- [`src/gogo_agent/security/exercises/flight_manager_key.py`](src/gogo_agent/security/exercises/flight_manager_key.py) — 用假 Key 练习航班管家调用契约与占位符替换，标注为当前未启用。
+- [`src/gogo_agent/security/exercises/rgh_workspace.py`](src/gogo_agent/security/exercises/rgh_workspace.py) — 用模拟 CLI 练习 Rolling Go 按用户隔离工作空间与登录态，标注为当前未启用。
+
 ## docs
 
 - [`docs/AgentScope-Python-迁移路线图.md`](docs/AgentScope-Python-迁移路线图.md) — 规定从 Java 版 GoGo Agent 迁移到 AgentScope Python 2.x 的长期阶段规划与迁移边界。
@@ -165,6 +214,14 @@
 - [`docs/契约样例/028-可信身份与会话归属.md`](docs/契约样例/028-可信身份与会话归属.md) — 说明模型工具参数、认证上下文和 SQL 会话归属的信任边界与负例。
 - [`docs/契约样例/阶段D-029-041-调试指南.md`](docs/契约样例/阶段D-029-041-调试指南.md) — 提供阶段 D 的 Java/Python 对照、可复制命令、逐断点验收、预测练习与限制。
 - [`docs/契约样例/阶段D-前端与Scalar逐步调试.md`](docs/契约样例/阶段D-前端与Scalar逐步调试.md) — 指导用本地浏览器练习库、React 聊天页、Scalar、PyCharm 断点逐项学习 029–041。
+- [`docs/契约样例/阶段F-061-067-调试指南.md`](docs/契约样例/阶段F-061-067-调试指南.md) — 提供预订门禁、唯一下单、未知结果对账、取消、只读重试、并行搜索与熔断的 Java/Python 对照、断点、练习与未验证边界。
+- [`docs/契约样例/048-旅行Skill与MCP清单.md`](docs/契约样例/048-旅行Skill与MCP清单.md) — 核对 Java 旅行 Skill 与 MCP 的启用状态、凭证与写权限，并给出 Python 迁移去向。
+- [`docs/契约样例/阶段E-046-049-058-调试指南.md`](docs/契约样例/阶段E-046-049-058-调试指南.md) — 提供外部能力的 Java/Python 对照、零准备运行、断点、预测练习、已知缺陷与未验证边界。
+- [`docs/契约样例/055-第三方鉴权授权图.md`](docs/契约样例/055-第三方鉴权授权图.md) — 用“用户、服务、供应商”授权图和集成清单说明各凭证的持有者、资源、更新与撤销方式。
+- [`docs/契约样例/阶段E-050-059-调试指南.md`](docs/契约样例/阶段E-050-059-调试指南.md) — 提供凭证与鉴权练习的 Java/Python 对照、零准备运行、断点、预测练习与未验证边界。
+- [`docs/契约样例/阶段E-042-060-调试指南.md`](docs/契约样例/阶段E-042-060-调试指南.md) — 提供阶段 E 规划核心的 Java/Python 对照、零准备运行、逐断点验收、预测练习与未验证边界。
+- [`docs/契约样例/阶段E-前端触发规划Agent逐步调试.md`](docs/契约样例/阶段E-前端触发规划Agent逐步调试.md) — 指导用练习库、React 聊天页、Scalar、断点和日志逐步调试 042–060 的规划 Agent 触发链路。
+- [`docs/契约样例/执行过程时间轴-调试指南.md`](docs/契约样例/执行过程时间轴-调试指南.md) — 说明 Java 组件复用、Python 事件协议、离线浏览器运行、逐断点观察和回放边界。
 
 ## docs/架构
 
@@ -217,13 +274,21 @@
 - [`scripts/demo_026_model_roles.py`](scripts/demo_026_model_roles.py) — 用固定模型响应演示主/稳定档调用、token 日志和切换模型后的身份仓储不变。
 - [`scripts/demo_027_active_info.py`](scripts/demo_027_active_info.py) — 用离线 HTTP 演示真实 InfoAgent 活跃记录、精确续聊、回退和跨用户拒绝。
 - [`scripts/demo_028_trusted_identity.py`](scripts/demo_028_trusted_identity.py) — 用固定工具调用和 SQLite 演示伪造身份拒绝与删除会话复用后的归属。
+- [`scripts/demo_execution_trace.py`](scripts/demo_execution_trace.py) — 用固定模型与真实规划工具提供执行时间轴的离线命令和隔离浏览器后端。
 - [`scripts/init_stage_d_test_db.py`](scripts/init_stage_d_test_db.py) — 仅在隔离 SQLite 中创建阶段 D 业务表并展示建表前后结果。
 - [`scripts/migrate_stage_d_tables.py`](scripts/migrate_stage_d_tables.py) — 预检并显式创建 `.env` MySQL 中缺失的阶段 D 项目表，核验项目字段注释与关键唯一约束。
 - [`scripts/prepare_stage_d_browser_lab.py`](scripts/prepare_stage_d_browser_lab.py) — 创建不接触 `.env` 数据库的临时 SQLite、测试账号职级与模拟预订，供浏览器调试。
+- [`scripts/prepare_stage_e_browser_lab.py`](scripts/prepare_stage_e_browser_lab.py) — 创建含用户级途牛 Key 表的阶段 E 练习库、3 个账号、假途牛命令与保密变量文件，供前端触发规划 Agent 调试。
 - [`scripts/demo_029_040_stage_d.py`](scripts/demo_029_040_stage_d.py) — 用离线模型、真实管理 Toolkit 与隔离数据库逐项演示 029–040 分支。
 - [`scripts/build_policy_corpus.py`](scripts/build_policy_corpus.py) — 将指定 DOCX 离线切分为带来源和 SHA-256 版本的政策索引。
 - [`scripts/demo_034_policy_knowledge.py`](scripts/demo_034_policy_knowledge.py) — 用临时脱敏 DOCX 演示政策索引导入、检索与更新重建。
 - [`scripts/benchmark_041_thinking.py`](scripts/benchmark_041_thinking.py) — 用固定题集对照默认和高推理模型的耗时、JSON 有效率及工具误调用。
+- [`scripts/demo_042_060_planning.py`](scripts/demo_042_060_planning.py) — 用模拟候选、固定政策和确定性评估器演示步骤推进、方案计算、审核仲裁与版本归属，不访问网络或数据库。
+- [`scripts/demo_050_059_security.py`](scripts/demo_050_059_security.py) — 用隔离内存库、假授权方和假 CLI 演示 API Key 加密脱敏、授权清单、Token 注入与 PKCE 边界，不访问真实服务。
+- [`scripts/demo_061_067_booking.py`](scripts/demo_061_067_booking.py) — 用模拟供应商、内存库和固定时钟演示预订门禁、响应丢失对账、取消、只读重试、并行搜索与熔断。
+- [`scripts/demo_046_058_integrations.py`](scripts/demo_046_058_integrations.py) — 用假 CLI、假天气 MCP 服务与模拟传输演示安全运行器、途牛规范化、实时查询与天气 MCP 的生命周期。
+- [`scripts/fake_tuniu_cli.py`](scripts/fake_tuniu_cli.py) — 纯标准库模拟途牛 CLI，可按环境变量返回成功、失败、非 JSON、挂起、超大输出，或把样例日期改为请求日期（`FAKE_TUNIU_ECHO_DATES=1`）。
+- [`scripts/fake_weather_mcp_server.py`](scripts/fake_weather_mcp_server.py) — 用 FastMCP 提供 stdio 天气 forecast 工具，可按环境变量模拟工具错误、坏响应、崩溃与挂起。
 
 ## output
 
@@ -237,6 +302,7 @@
 
 - [`tests/__init__.py`](tests/__init__.py) — 标记测试目录为 Python 包。
 - [`tests/test_exercises.py`](tests/test_exercises.py) — 验证 000 系列小练习的输入校验、并发性能与 HTTP 端点行为。
+- [`tests/test_execution_trace.py`](tests/test_execution_trace.py) — 验证真实主子事件、SQLite 回放与权限、脱敏、等待/失败状态、背压和断连清理。
 - [`tests/test_001.py`](tests/test_001.py) — 验证 001 配置、日期工具、HTTP 健康检查及模拟模型网关调用链。
 - [`tests/test_004_auth.py`](tests/test_004_auth.py) — 验证 004 登录、登出、用户信息隔离、401 拦截与密码哈希自动迁移。
 - [`tests/test_005_chat.py`](tests/test_005_chat.py) — 隔离意图模型后验证会话持久化、AgentState 恢复、用户隔离和 SSE 输出。
@@ -259,5 +325,11 @@
 - [`tests/test_028_identity_boundary.py`](tests/test_028_identity_boundary.py) — 验证模型伪造工具身份无效和 SQL 已删除会话重新归属的隔离。
 - [`tests/test_029_041_stage_d.py`](tests/test_029_041_stage_d.py) — 验证管理路由、工具身份、政策索引、缓存、推荐顺序及差旅 HTTP 权限。
 - [`tests/test_030_038_travel_business.py`](tests/test_030_038_travel_business.py) — 验证模型、政策、资料、差旅事务、冲突、预订与审批状态边界。
+- [`tests/test_042_060_planning.py`](tests/test_042_060_planning.py) — 验证规划步骤推进、确定性方案计算、审核仲裁、计划版本与归属隔离及规划工具边界。
+- [`tests/test_050_059_security.py`](tests/test_050_059_security.py) — 验证脱敏与日志无明文、加密轮换、用户级 Key 隔离、授权归属不回退、Token 注入边界和 PKCE 负例。
+- [`tests/test_046_049_058_integrations.py`](tests/test_046_049_058_integrations.py) — 验证外部 CLI 的白名单、限额、超时清理、用户隔离、密钥屏蔽，途牛规范化，实时查询三态，以及天气 MCP 的真实 stdio 连接与错误映射。
+- [`tests/test_061_067_booking.py`](tests/test_061_067_booking.py) — 验证预订门禁、唯一下单与幂等、未知结果不重复下单、取消顺序、预订工具边界、只读重试、并行隔离与熔断状态。
+- [`tests/test_043_planning_chat.py`](tests/test_043_planning_chat.py) — 验证途牛候选只用当前用户的 Key、搜索失败与缺 Key 显式报错、聊天只在规划意图下注册规划工具、规划 Agent 工具面不含预订与取消。
+- [`tests/test_053_subjective_review.py`](tests/test_053_subjective_review.py) — 验证模型主观评估的结构化输出、无效输出与异常转为不可用、三维度与客观结论的仲裁。
 - [`tests/test_mariadb_integration.py`](tests/test_mariadb_integration.py) — 验证真实 MariaDB 数据库连接、用户密码迁移、会话消息与 agentscope_session 存取。
 - [`tests/test_redis_integration.py`](tests/test_redis_integration.py) — 验证真实 172.22.22.123 Redis 连接、30 天 TTL、跨实例 Token 持久化与平滑降级。

@@ -9,6 +9,7 @@ import { isPersistedMessageId } from '../store/chatStore';
 
 // ── Agent display names ───────────────────────────────────────────────────
 const AGENT_LABELS: Record<string, string> = {
+  GoGo: 'GoGo 主智能体',
   MasterAgent: 'GoGo助手',
   QueryRewritingAgent: '查询改写智能体',
   IntentRecognitionAgent: '意图识别智能体',
@@ -54,6 +55,7 @@ function buildTimelineUnits(timeline: TimelineItem[]): TimelineUnit[] {
       if (
         prev &&
         prev.type === 'tool-group' &&
+        prev.items[prev.items.length - 1].agentName === item.agentName &&
         prev.items[prev.items.length - 1].title === item.title
       ) {
         prev.items.push(item);
@@ -68,7 +70,15 @@ function buildTimelineUnits(timeline: TimelineItem[]): TimelineUnit[] {
 }
 
 // ── Status icons ──────────────────────────────────────────────────────────
-function StatusIcon({ status }: { status: TimelineItem & { kind: 'tool' } extends { status: infer S } ? S : never }) {
+function StatusIcon({ status }: { status: ToolItem['status'] }) {
+  if (status === 'error') {
+    return <span className="timeline-status error" aria-label="失败">
+      <svg viewBox="0 0 16 16" fill="none" width="14" height="14">
+        <circle cx="8" cy="8" r="6.5" stroke="currentColor" strokeWidth="1.5" />
+        <path d="M8 4.5v4M8 11h.01" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      </svg>
+    </span>;
+  }
   if (status === 'done') {
     return (
       <span className="timeline-status done">
@@ -120,7 +130,8 @@ function ThinkingBlock({
   if (!text.trim()) return null;
   return (
     <div className="timeline-thinking">
-      <div className="timeline-thinking-header" onClick={() => setExpanded((v) => !v)}>
+      <button type="button" className="timeline-thinking-header" aria-expanded={expanded}
+        onClick={() => setExpanded((v) => !v)}>
         <span className="timeline-thinking-icon">
           <svg viewBox="0 0 16 16" fill="none" width="13" height="13">
             <path
@@ -134,7 +145,7 @@ function ThinkingBlock({
         <span className="timeline-thinking-agent">· {agentDisplayName(agentName)}</span>
         <span className="timeline-thinking-preview">{preview || '思考中...'}</span>
         <span className={`timeline-thinking-chevron${expanded ? '' : ' collapsed'}`}>›</span>
-      </div>
+      </button>
       {expanded && <div className="timeline-thinking-body">{text}</div>}
     </div>
   );
@@ -146,7 +157,7 @@ function ToolBlock({ items }: { items: ToolItem[] }) {
   const count = items.length;
   const anyInProgress = items.some((i) => i.status === 'in-progress');
   const allDone = items.every((i) => i.status === 'done');
-  const status: ToolItem['status'] = anyInProgress
+  const status: ToolItem['status'] = items.some((i) => i.status === 'error') ? 'error' : anyInProgress
     ? 'in-progress'
     : allDone
     ? 'done'
@@ -154,24 +165,27 @@ function ToolBlock({ items }: { items: ToolItem[] }) {
   const hasResult = items.some((i) => !!(i.result && i.result.trim()));
   const hasArgs = items.some((i) => !!(i.arguments && i.arguments.trim()));
   const hasDetail = hasResult || hasArgs;
-  const clickable = hasDetail && !anyInProgress;
+  const clickable = hasDetail;
   const title = items[0].title;
 
   return (
     <div className="timeline-tool">
-      <div
+      <button type="button" disabled={!clickable} aria-expanded={expanded}
         className={`timeline-tool-header ${status}${clickable ? ' clickable' : ''}`}
         onClick={clickable ? () => setExpanded((v) => !v) : undefined}
       >
         <StatusIcon status={status} />
         <span className="timeline-tool-title">{title}</span>
+        <span className="timeline-tool-agent">{agentDisplayName(items[0].agentName)}</span>
+        {status === 'error' && <span className="timeline-error-label">失败</span>}
+        {status === 'pending' && <span className="timeline-waiting-label">待用户处理</span>}
         {clickable && (
           <span className="timeline-tool-toggle">
             {expanded ? '收起' : `查看 ${count} 个步骤`}
             <span className={`timeline-tool-chevron${expanded ? '' : ' collapsed'}`}>›</span>
           </span>
         )}
-      </div>
+      </button>
       {expanded && hasDetail && (
         <div className="timeline-tool-result">
           {count === 1 ? (
@@ -185,7 +199,7 @@ function ToolBlock({ items }: { items: ToolItem[] }) {
               {items[0].result && items[0].result.trim() && (
                 <div className="tool-result-section">
                   <div className="tool-section-label">结果</div>
-                  <pre>{items[0].result}</pre>
+                  <pre>{formatToolArgs(items[0].result)}</pre>
                 </div>
               )}
             </>
@@ -202,7 +216,7 @@ function ToolBlock({ items }: { items: ToolItem[] }) {
                 {it.result && it.result.trim() ? (
                   <div className="tool-result-section">
                     <div className="tool-section-label">结果</div>
-                    <pre>{it.result}</pre>
+                    <pre>{formatToolArgs(it.result)}</pre>
                   </div>
                 ) : (
                   <div className="timeline-tool-step-empty">无输出</div>
@@ -214,6 +228,20 @@ function ToolBlock({ items }: { items: ToolItem[] }) {
       )}
     </div>
   );
+}
+
+function AgentExecution({ item }: { item: Extract<TimelineItem, { kind: 'agent' }> }) {
+  return <div className={`timeline-agent ${item.parentAgentName ? 'child' : ''}`}>
+    <div className="timeline-agent-heading">
+      <StatusIcon status={item.status} />
+      <strong>{item.title}</strong>
+      <span>{item.status === 'in-progress' ? '执行中' : item.status === 'error' ? '执行未完成' : '执行完成'}</span>
+    </div>
+    {item.parentAgentName && <div className="timeline-agent-note">由 {agentDisplayName(item.parentAgentName)} 委派</div>}
+    {item.detail && <details className="timeline-routing"><summary>查看本轮识别与可用工具</summary>{item.detail}</details>}
+    {item.status !== 'in-progress' && !item.thinkingAvailable &&
+      <div className="timeline-agent-note">本次调用未返回可展示的思考内容</div>}
+  </div>;
 }
 
 // ── Plan block ────────────────────────────────────────────────────────────
@@ -401,6 +429,9 @@ export default function AgentMessageBlock({ msg, liveTimeline = [], isStreaming,
                   return <ToolBlock key={`tool-${unit.items[0].id}`} items={unit.items} />;
                 }
                 const { item, idx } = unit;
+                if (item.kind === 'agent') {
+                  return <AgentExecution key={item.id} item={item} />;
+                }
                 if (item.kind === 'thinking') {
                   return (
                     <ThinkingBlock
@@ -437,7 +468,10 @@ export default function AgentMessageBlock({ msg, liveTimeline = [], isStreaming,
             </div>
           )}
 
-          {hasContent && <MarkdownContent content={msg.content} />}
+          {hasContent && <>
+            {timeline.length > 0 && <h3 className="timeline-answer-label">{agentDisplayName(msg.agentName)} · 回复</h3>}
+            <MarkdownContent content={msg.content} />
+          </>}
 
           {isStreaming && !hasContent && (
             <div className="thinking-indicator">

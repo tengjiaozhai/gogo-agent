@@ -85,6 +85,10 @@ def test_http_info_agent_continues_without_reopening_intent_pipeline(master_http
     final = history.list_messages(session_id, "u001")[-1]
     assert final.agentName == "InfoAgent"
     assert final.extra["turn_entry"] == "continue_active"
+    agents = [item for item in final.extra["timeline"] if item["kind"] == "agent"]
+    assert [item["agentName"] for item in agents] == ["InfoAgent"]
+    assert "parentAgentName" not in agents[0]
+    assert agents[0]["status"] == "done"
 
     denied = client.post(
         f"/api/chat/{session_id}",

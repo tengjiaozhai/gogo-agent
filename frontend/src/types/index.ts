@@ -1,11 +1,14 @@
 export type TimelineItem =
-  | { kind: 'thinking'; agentName: string; text: string }
+  | { kind: 'agent'; id: string; agentName: string; title: string;
+      status: 'in-progress' | 'done' | 'error'; parentAgentName?: string;
+      thinkingAvailable: boolean; detail?: string }
+  | { kind: 'thinking'; agentName: string; text: string; id?: string }
   | {
       kind: 'tool';
       id: string;
       agentName: string;
       title: string;
-      status: 'pending' | 'done' | 'in-progress';
+      status: 'pending' | 'done' | 'in-progress' | 'error';
       result?: string;
       /** 工具调用的入参 JSON 字符串 */
       arguments?: string;
@@ -45,7 +48,7 @@ export interface PlanProgress {
 export interface PlanStep {
   id: string;
   title: string;
-  status: 'pending' | 'done' | 'in-progress';
+  status: 'pending' | 'done' | 'in-progress' | 'error';
   /** 该步骤所属的 Agent 名称（tool 步骤需要此字段来归组） */
   agentName?: string;
   /** 工具执行结果文本（可展开查看） */

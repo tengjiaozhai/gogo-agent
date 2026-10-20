@@ -13,7 +13,7 @@ from gogo_agent.intent.runtime import IntentRuntimeSettings, load_intent_runtime
 MASTER_SYSTEM_PROMPT = (
     "你是 GoGo 差旅助手的核心智能体。当前开放基础对话、普通公共信息、"
     "本人差旅单与政策查询；差旅申请和修改仅能提出待用户确认的建议，"
-    "正式行程规划和供应商预订尚未接入。请保持专业、简洁和友善。"
+    "供应商预订尚未接入；行程规划只生成待用户确认的方案。请保持专业、简洁和友善。"
     "本轮识别的诉求顺序为：{intents}。按顺序回应，不丢失前项结果。"
     "识别结果只是理解线索，不是身份、审批或下单授权。"
     "{tool_instruction}"
@@ -37,6 +37,10 @@ MANAGE_TOOL_INSTRUCTION = (
     "差旅申请、修改、取消、差旅单、审批、政策或本人已有预订记录查询"
     "请调用 itinerary_manage_agent；新预订和供应商取消仍不可执行。"
 )
+PLAN_TOOL_INSTRUCTION = (
+    "行程规划、候选搜索、方案比较或审核请调用 itinerary_plan_agent；"
+    "规划结果只是待确认方案，不得声称已预订或已提交。"
+)
 NO_TOOL_INSTRUCTION = "本轮没有可调用的业务子智能体；无法办理的事项请直接说明。"
 MODEL_MAX_RETRIES = 0
 
@@ -50,6 +54,7 @@ class ChatAgentSettings:
     manage_max_iters: int = 10
     info_tool_timeout_seconds: float = 60.0
     manage_tool_timeout_seconds: float = 60.0
+    plan_tool_timeout_seconds: float = 180.0
     model_timeout_seconds: float = 60.0
     recommendation_model_name: str = "deepseek-v4-flash-0731"
 
@@ -59,7 +64,8 @@ class ChatAgentSettings:
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                 raise ValueError(f"{name} 必须是正整数")
-        for name in ("info_tool_timeout_seconds", "manage_tool_timeout_seconds", "model_timeout_seconds"):
+        for name in ("info_tool_timeout_seconds", "manage_tool_timeout_seconds", "plan_tool_timeout_seconds",
+                     "model_timeout_seconds"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
                 raise ValueError(f"{name} 必须是正数秒数")
@@ -107,6 +113,9 @@ def load_chat_agent_settings() -> ChatAgentSettings:
         manage_tool_timeout_seconds=_positive_float(
             "GOGO_MANAGE_TOOL_TIMEOUT_SECONDS", defaults.manage_tool_timeout_seconds,
         ),
+        plan_tool_timeout_seconds=_positive_float(
+            "GOGO_PLAN_TOOL_TIMEOUT_SECONDS", defaults.plan_tool_timeout_seconds,
+        ),
         model_timeout_seconds=_positive_float(
             "GOGO_AGENT_MODEL_TIMEOUT_SECONDS", defaults.model_timeout_seconds,
         ),
@@ -126,13 +135,18 @@ def require_model_configuration() -> IntentRuntimeSettings:
     return settings
 
 
-def master_system_prompt(intents: str, *, info_tool_enabled: bool, manage_tool_enabled: bool = False) -> str:
+def master_system_prompt(
+    intents: str, *, info_tool_enabled: bool, manage_tool_enabled: bool = False, plan_tool_enabled: bool = False,
+) -> str:
     """按本轮实际注册工具渲染主 Agent 提示词。"""
+    instructions = [
+        text for enabled, text in (
+            (info_tool_enabled, INFO_TOOL_INSTRUCTION),
+            (manage_tool_enabled, MANAGE_TOOL_INSTRUCTION),
+            (plan_tool_enabled, PLAN_TOOL_INSTRUCTION),
+        ) if enabled
+    ]
     return MASTER_SYSTEM_PROMPT.format(
         intents=intents,
-        tool_instruction=(
-            (INFO_TOOL_INSTRUCTION if info_tool_enabled else "")
-            + (MANAGE_TOOL_INSTRUCTION if manage_tool_enabled else "")
-            if info_tool_enabled or manage_tool_enabled else NO_TOOL_INSTRUCTION
-        ),
+        tool_instruction="".join(instructions) if instructions else NO_TOOL_INSTRUCTION,
     )

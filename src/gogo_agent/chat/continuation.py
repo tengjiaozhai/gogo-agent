@@ -17,6 +17,7 @@ from gogo_agent.intent.models import QueryInput
 from gogo_agent.request_context import RequestContext
 
 from .repository import ActiveAgentRecord, AgentSessionStoreProtocol
+from .trace import ExecutionTrace
 
 
 class TurnEntry(StrEnum):
@@ -44,6 +45,7 @@ class ActiveAgentContinuation(Protocol):
 
     async def continue_turn(
         self, request: RequestContext, agent_name: str, query: QueryInput,
+        *, trace: ExecutionTrace | None = None,
     ) -> ContinuationReply: ...
 
     def record_completed_agent(self, request: RequestContext, agent_name: str) -> None: ...
@@ -82,7 +84,7 @@ class InfoAgentContinuation:
     def __init__(
         self,
         session_store: AgentSessionStoreProtocol,
-        build_agent: Callable[[RequestContext, AgentState], Agent],
+        build_agent: Callable[..., Agent],
         close_agent: Callable[[Agent], Awaitable[None]],
         state_session_id: Callable[[str, str], str],
         timeout_seconds: Callable[[], float],
@@ -136,6 +138,7 @@ class InfoAgentContinuation:
 
     async def continue_turn(
         self, request: RequestContext, agent_name: str, query: QueryInput,
+        *, trace: ExecutionTrace | None = None,
     ) -> ContinuationReply:
         if agent_name not in self.available_agents:
             raise ValueError("不能续跑未注册的 Agent")
@@ -143,7 +146,7 @@ class InfoAgentContinuation:
         state = self._session_store.load_agent_state(key, agent_name=agent_name)
         if state is None:
             raise ValueError("活跃 Agent 状态已丢失")
-        agent = self._build_agent(request, state)
+        agent = self._build_agent(request, state, trace=trace)
         try:
             async with asyncio.timeout(self._timeout_seconds()) as deadline:
                 reply = await agent.reply(UserMsg(name="user", content=query.question))

@@ -1,5 +1,6 @@
 import { useAuthStore } from '../store/authStore';
 import { getApiBase } from './config';
+import type { TimelineItem } from '../types';
 
 export interface SSEEvent {
   event: string;
@@ -21,6 +22,7 @@ export interface RemoteMessage {
   timestamp: number;
   feedback: 'LIKE' | 'DISLIKE' | null;
   feedbackAt: number | null;
+  extra?: { timeline?: TimelineItem[] } | null;
 }
 
 function authHeaders(): Record<string, string> {

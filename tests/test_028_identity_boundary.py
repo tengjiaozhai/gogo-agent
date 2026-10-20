@@ -47,9 +47,9 @@ def test_model_supplied_user_id_and_session_id_cannot_select_another_users_info(
     schemas = []
     original_build_info = executor._build_info_agent
 
-    def build_info(request, state=None):
+    def build_info(request, state=None, *, trace=None):
         captured_requests.append(request)
-        return original_build_info(request, state)
+        return original_build_info(request, state, trace=trace)
 
     monkeypatch.setattr(executor, "_build_info_agent", build_info)
 

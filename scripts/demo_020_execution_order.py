@@ -222,7 +222,7 @@ class FakeActiveAgent:
     def record_completed_agent(self, request, agent_name):
         pass
 
-    async def continue_turn(self, request, agent_name, query):
+    async def continue_turn(self, request, agent_name, query, *, trace=None):
         self.events.append("active_agent_replied")
         return ContinuationReply(f"{agent_name} 已继续处理：{query.question}")
 

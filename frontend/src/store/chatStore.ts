@@ -57,6 +57,7 @@ interface ChatState {
   snapshotProgressToLastMessage: () => void;
   clearProgress: () => void;
   addTimelineItem: (item: TimelineItem) => void;
+  updateTimelineAgent: (id: string, patch: Partial<Extract<TimelineItem, { kind: 'agent' }>>) => void;
   updateTimelineTool: (id: string, patch: Partial<TimelineItem & { kind: 'tool' }>) => void;
   appendTimelineThinking: (agentName: string, text: string, roundStart?: boolean) => void;
   setTimelinePlan: (tasks: PlanTask[]) => void;
@@ -276,6 +277,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
         );
         return { ...c, timeline };
       }),
+    })),
+
+  updateTimelineAgent: (id, patch) =>
+    set((state) => ({
+      conversations: state.conversations.map((c) => c.id === state.currentConversationId
+        ? { ...c, timeline: c.timeline.map((item) => item.kind === 'agent' && item.id === id
+          ? { ...item, ...patch } : item) } : c),
     })),
 
   appendTimelineThinking: (agentName, text, roundStart) =>
