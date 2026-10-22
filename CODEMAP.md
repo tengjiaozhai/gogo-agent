@@ -153,7 +153,7 @@
 - [`src/gogo_agent/planning/simulated.py`](src/gogo_agent/planning/simulated.py) — 提供固定模拟候选、模拟政策与确定性主观评估替身，仅用于练习和测试。
 - [`src/gogo_agent/planning/search.py`](src/gogo_agent/planning/search.py) — 经途牛 CLI 只读搜索去程、返程与目的地酒店，只使用当前用户自己的 API Key，缺 Key 或搜索失败时显式报错。
 - [`src/gogo_agent/planning/assessors.py`](src/gogo_agent/planning/assessors.py) — 053 的三个主观评估器：通过稳定模型角色各调用一次模型，输出结构化结论，无效输出记为不可用。
-- [`src/gogo_agent/planning/dependencies.py`](src/gogo_agent/planning/dependencies.py) — 提供进程内唯一的规划服务，计划记录目前只在内存中保存。
+- [`src/gogo_agent/planning/dependencies.py`](src/gogo_agent/planning/dependencies.py) — 提供进程内唯一的规划服务；有数据库时把计划持久化到 `itinerary_plan` 表（跨重启/多 worker 可读回），无数据库或 `GOGO_PLAN_STORE=memory` 时回落内存实现。
 
 ## src/gogo_agent/booking
 
@@ -248,6 +248,7 @@
 
 - [`docs/research/agentscope-2.0.8-context-evaluation.md`](docs/research/agentscope-2.0.8-context-evaluation.md) — 对照 AgentScope Python 2.0.8 与项目的身份传递、改写历史和 Agent 状态管理边界。
 - [`docs/research/python-3.14-compatibility-assessment.md`](docs/research/python-3.14-compatibility-assessment.md) — 评估 Python 3.14 稳定性及对阶段 A 至阶段 I 实施的潜在兼容性影响。
+- [`docs/research/issue-compute-plan-参数契约缺失.md`](docs/research/issue-compute-plan-参数契约缺失.md) — 记录 compute_plan 参数契约缺失缺陷的根因、责任归属、修复内容与验收结果。
 
 ## docs/迁移
 
@@ -325,7 +326,8 @@
 - [`tests/test_028_identity_boundary.py`](tests/test_028_identity_boundary.py) — 验证模型伪造工具身份无效和 SQL 已删除会话重新归属的隔离。
 - [`tests/test_029_041_stage_d.py`](tests/test_029_041_stage_d.py) — 验证管理路由、工具身份、政策索引、缓存、推荐顺序及差旅 HTTP 权限。
 - [`tests/test_030_038_travel_business.py`](tests/test_030_038_travel_business.py) — 验证模型、政策、资料、差旅事务、冲突、预订与审批状态边界。
-- [`tests/test_042_060_planning.py`](tests/test_042_060_planning.py) — 验证规划步骤推进、确定性方案计算、审核仲裁、计划版本与归属隔离及规划工具边界。
+- [`tests/conftest.py`](tests/conftest.py) — 测试全局隔离：默认置 `GOGO_PLAN_STORE=memory`，避免用例写入 `.env` 指向的真实库。
+- [`tests/test_042_060_planning.py`](tests/test_042_060_planning.py) — 验证规划步骤推进、确定性方案计算、审核仲裁、计划版本与归属隔离、跨实例持久化及规划工具边界。
 - [`tests/test_050_059_security.py`](tests/test_050_059_security.py) — 验证脱敏与日志无明文、加密轮换、用户级 Key 隔离、授权归属不回退、Token 注入边界和 PKCE 负例。
 - [`tests/test_046_049_058_integrations.py`](tests/test_046_049_058_integrations.py) — 验证外部 CLI 的白名单、限额、超时清理、用户隔离、密钥屏蔽，途牛规范化，实时查询三态，以及天气 MCP 的真实 stdio 连接与错误映射。
 - [`tests/test_061_067_booking.py`](tests/test_061_067_booking.py) — 验证预订门禁、唯一下单与幂等、未知结果不重复下单、取消顺序、预订工具边界、只读重试、并行隔离与熔断状态。

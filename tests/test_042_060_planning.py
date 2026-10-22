@@ -158,7 +158,7 @@ def test_044_tool_and_direct_calculation_agree_and_model_cannot_inject_user():
                         departure_date="2026-10-20", return_date="2026-10-22")
     plan_id = created["data"]["plan_id"]
     call_tool(toolkit, "search_candidates", plan_id=plan_id)
-    computed = call_tool(toolkit, "compute_plan", plan_id=plan_id, policy_json=SIMULATED_POLICY.model_dump_json())
+    computed = call_tool(toolkit, "compute_plan", plan_id=plan_id, policy=SIMULATED_POLICY.model_dump())
     assert computed["success"] is True
 
     direct = compute_plan(
@@ -400,7 +400,7 @@ def test_043_full_tool_path_reaches_review_without_order_writes():
     plan_id = call("create_plan", origin="北京", destination="上海", departure_date="2026-10-20",
                    return_date="2026-10-22")["data"]["plan_id"]
     assert call("search_candidates", plan_id=plan_id)["success"] is True
-    computed = call("compute_plan", plan_id=plan_id, policy_json=SIMULATED_POLICY.model_dump_json())
+    computed = call("compute_plan", plan_id=plan_id, policy=SIMULATED_POLICY.model_dump())
     assert computed["data"]["candidate_source"] == "simulated"
     assert computed["data"]["proposals"]
     reviewed = call("review_plan", plan_id=plan_id, proposal_tag="综合最佳")
@@ -416,3 +416,104 @@ def test_043_plan_agent_is_assembled_with_only_planning_tools():
     agent = build_plan_agent(model=_FallbackMockModel(), toolkit=toolkit, state=AgentState(session_id="s1"))
     assert isinstance(agent, Agent) and agent.name == "ItineraryPlanAgent"
     assert "没有提交差旅单" in PLAN_SYSTEM_PROMPT
+
+
+# ============================ 060 计划持久化（跨进程读回） ============================
+
+
+def test_060_plan_survives_new_repository_instance_over_shared_database(tmp_path):
+    """数据库模式下，新建的仓储实例仍能读回计划，覆盖"重启/多 worker 丢计划"的回归。"""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from gogo_agent.db.base import Base
+    from gogo_agent.planning.store import ItineraryPlanModel, PlanRepository
+
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine, tables=[ItineraryPlanModel.__table__])
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+
+    writer = PlanService(PlanRepository(factory), clock=lambda: CLOCK_TIME, today=lambda: TODAY, id_factory=lambda: "id060")
+    created = writer.create("u001", CONDITIONS)
+
+    reader = PlanService(PlanRepository(factory), clock=lambda: CLOCK_TIME, today=lambda: TODAY)
+    assert reader.get("u001", created.plan_id).conditions.destination == "上海"
+
+
+def test_060_memory_fallback_still_isolates_users():
+    """未配置数据库时回落内存实现，跨用户读取仍必须视为不存在。"""
+    service = make_service()
+    plan = service.create("u001", CONDITIONS)
+    assert service.get("u001", plan.plan_id).plan_id == plan.plan_id
+    with pytest.raises(PlanError) as denied:
+        service.get("u002", plan.plan_id)
+    assert denied.value.code == "PLAN_NOT_FOUND"
+
+
+# ============================ 044 compute_plan 参数契约 ============================
+
+
+def _compute_toolkit():
+    """构造一个已搜索到候选的规划工具集，供 compute_plan 参数校验用例复用。"""
+    service = make_service()
+    plan = service.create("u001", CONDITIONS)
+    service.attach_candidates("u001", plan.plan_id, simulated_search(CONDITIONS))
+    toolkit = build_plan_toolkit(
+        service, ctx(), search_provider=simulated_provider, assessors=simulated_assessors(),
+    )
+    return toolkit, plan.plan_id
+
+
+def test_044_compute_plan_exposes_structured_schema_to_model():
+    """模型必须能直接从 tool schema 看到 scores/policy/weights 的结构，而不是一段无约束字符串。"""
+    toolkit, _ = _compute_toolkit()
+    schema = run(toolkit.get_tool("compute_plan")).input_schema
+    properties = schema["properties"]
+
+    assert "scores_json" not in properties and "policy_json" not in properties
+    assert {"scores", "policy", "weights"} <= set(properties)
+    # 三个参数都以 $ref 指向可解析的 $defs，模型才能看到字段级约束
+    for name, definition in (("scores", "PreferenceScores"), ("policy", "PlanPolicy"), ("weights", "DimensionWeights")):
+        assert {"$ref": f"#/$defs/{definition}"} in properties[name]["anyOf"]
+        assert definition in schema["$defs"]
+
+
+def test_044_compute_plan_accepts_structured_objects():
+    toolkit, plan_id = _compute_toolkit()
+    result = call_tool(
+        toolkit, "compute_plan", plan_id=plan_id,
+        policy={"hotel_star_limit": 3},
+        weights={"time": 0.5, "price": 0.3, "preference": 0.1, "experience": 0.1},
+        scores={"transport_scores": {}, "hotel_scores": {}},
+    )
+    assert result["success"] is True
+    assert result["data"]["proposals"]
+
+
+def test_044_compute_plan_rejects_unknown_field_and_names_the_parameter():
+    """非法字段必须回指具体参数，模型才能自纠；这是原 bug 的直接回归点。"""
+    toolkit, plan_id = _compute_toolkit()
+
+    bad_scores = call_tool(toolkit, "compute_plan", plan_id=plan_id,
+                           scores={"preference_weights": {"时间优先": 0.5}})
+    assert bad_scores["errorCode"] == "INVALID_PARAM"
+    assert bad_scores["field"] == "scores"
+    assert "preference_weights" in bad_scores["message"]
+
+    bad_policy = call_tool(toolkit, "compute_plan", plan_id=plan_id,
+                           policy={"标准差旅政策": "经济舱优先"})
+    assert bad_policy["errorCode"] == "INVALID_PARAM"
+    assert bad_policy["field"] == "policy"
+    assert "标准差旅政策" in bad_policy["message"]
+
+
+def test_044_compute_plan_rejects_string_payload_instead_of_silently_parsing():
+    """旧的 JSON 字符串用法必须被明确拒绝，不能静默接受后产生难以诊断的失败。"""
+    toolkit, plan_id = _compute_toolkit()
+    result = call_tool(toolkit, "compute_plan", plan_id=plan_id, scores='{"transport_scores": {}}')
+    assert result["errorCode"] == "INVALID_PARAM"
+    assert result["field"] == "scores"
+    assert "必须是对象" in result["message"]

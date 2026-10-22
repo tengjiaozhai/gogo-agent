@@ -124,7 +124,7 @@ def test_043_end_to_end_tool_path_with_tuniu_candidates_is_sourced_and_no_order(
     plan_id = created["data"]["plan_id"]
     searched = call("search_candidates", plan_id=plan_id)
     assert searched["success"] is True
-    computed = call("compute_plan", plan_id=plan_id, policy_json=SIMULATED_POLICY.model_dump_json())
+    computed = call("compute_plan", plan_id=plan_id, policy=SIMULATED_POLICY.model_dump())
     assert computed["data"]["candidate_source"] == "tuniu_cli"
     assert computed["data"]["proposals"]
     reviewed = call("review_plan", plan_id=plan_id, proposal_tag="综合最佳")

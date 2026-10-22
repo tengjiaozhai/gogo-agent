@@ -32,8 +32,24 @@ def _ok(data: dict[str, Any], message: str = "成功") -> str:
     return json.dumps({"success": True, "message": message, "data": data}, ensure_ascii=False)
 
 
-def _fail(code: str, message: str) -> str:
-    return json.dumps({"success": False, "errorCode": code, "message": message}, ensure_ascii=False)
+def _fail(code: str, message: str, *, field: str | None = None) -> str:
+    """失败回执；`field` 指出出错的具体参数，让模型能自行修正而不是盲目重试。"""
+    payload: dict[str, Any] = {"success": False, "errorCode": code, "message": message}
+    if field is not None:
+        payload["field"] = field
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def _invalid_field(name: str, value: Any, model: type) -> str:
+    """把 Pydantic 的字段级错误翻译成模型可读的一句中文，指明参数名与期望结构。"""
+    try:
+        model.model_validate(value)
+    except ValidationError as exc:
+        error = exc.errors()[0]
+        location = ".".join(str(part) for part in error["loc"]) or "顶层"
+        reason = error["msg"]
+        return f"参数 {name} 不合法：字段 {location} {reason}；期望结构见该参数的类型定义"
+    return f"参数 {name} 不合法"
 
 
 def _summary(plan: PlanView) -> dict[str, Any]:
@@ -124,17 +140,49 @@ def build_plan_toolkit(
         saved = service.attach_candidates(user_id, plan_id, candidates)
         return _ok(_summary(saved), f"已保存 {len(candidates.transports)} 条交通、{len(candidates.hotels)} 家酒店候选")
 
-    def compute_plan(plan_id: str, scores_json: str = "", policy_json: str = "", weather_summary: str = "") -> str:
-        """基于已保存候选计算代表方案。偏好分由你给出（scores_json），工具只做确定性计算。"""
-        try:
-            scores = None if not scores_json.strip() or scores_json.strip().lower() == "auto" else PreferenceScores.model_validate_json(scores_json)
-            policy = PlanPolicy.model_validate_json(policy_json) if policy_json.strip() else PlanPolicy()
-        except ValidationError:
-            return _fail("INVALID_PARAM", "偏好分或政策 JSON 字段无效")
+    def compute_plan(
+        plan_id: str,
+        scores: PreferenceScores | None = None,
+        policy: PlanPolicy | None = None,
+        weights: DimensionWeights | None = None,
+        weather_summary: str = "",
+    ) -> str:
+        """基于已保存候选计算代表方案；金额与时间全部来自确定性计算，不由模型估算。
+
+        Args:
+            plan_id: 已创建并有候选的计划标识。
+            scores: 偏好分，结构为 {"transport_scores": {"F1": {"score": 0-100, "basis": ["理由"]}},
+                "hotel_scores": {"H1": {...}}}；不传表示不提供偏好分。
+            policy: 数值化差旅政策，如 {"flight_class": "经济舱", "train_seat_class": "二等座",
+                "hotel_star_limit": 3}；只接受数值或枚举字段，不接受自然语言描述。不传表示不做政策检查。
+            weights: 四个维度权重 {"time": 0.5, "price": 0.3, "preference": 0.1, "experience": 0.1}，
+                先归一化再参与评分；不传使用项目默认权重。
+            weather_summary: 目的地天气摘要，仅作说明文字，不参与打分。
+        """
+        # FunctionTool 直接展开 JSON 为 dict，不做 Pydantic 校验，因此这里显式校验以便给出字段级错误。
+        parsed: dict[str, Any] = {}
+        for name, value, model in (
+            ("scores", scores, PreferenceScores),
+            ("policy", policy, PlanPolicy),
+            ("weights", weights, DimensionWeights),
+        ):
+            if value is None:
+                parsed[name] = None
+                continue
+            if not isinstance(value, (model, dict)):
+                return _fail(
+                    "INVALID_PARAM",
+                    f"参数 {name} 必须是对象或省略；期望结构见该参数的类型定义",
+                    field=name,
+                )
+            try:
+                parsed[name] = value if isinstance(value, model) else model.model_validate(value)
+            except ValidationError:
+                return _fail("INVALID_PARAM", _invalid_field(name, value, model), field=name)
         try:
             plan = service.compute(
-                user_id, plan_id, scores=scores, policy=policy, weights=DimensionWeights(),
-                weather_summary=weather_summary,
+                user_id, plan_id, scores=parsed["scores"], policy=parsed["policy"],
+                weights=parsed["weights"], weather_summary=weather_summary,
             )
         except PlanError as exc:
             return _fail(exc.code, str(exc))
