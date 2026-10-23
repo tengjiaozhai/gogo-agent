@@ -131,7 +131,8 @@
 - [`src/gogo_agent/travel/service.py`](src/gogo_agent/travel/service.py) — 编排本人差旅、审批、政策、联系人和预订的确定性业务规则。
 - [`src/gogo_agent/travel/router.py`](src/gogo_agent/travel/router.py) — 暴露已鉴权的本人差旅接口、管理员审批接口和禁用的外部回调。
 - [`src/gogo_agent/travel/dependencies.py`](src/gogo_agent/travel/dependencies.py) — 注入差旅业务服务并在数据库缺业务表时明确拒绝业务请求。
-- [`src/gogo_agent/travel/tools.py`](src/gogo_agent/travel/tools.py) — 为管理 Agent 装配带可信身份的只读查询和待确认写入建议工具。
+- [`src/gogo_agent/travel/confirmation.py`](src/gogo_agent/travel/confirmation.py) — 签发与校验差旅申请提交的确认令牌，把「用户已确认」变成服务端可验证、与摘要绑定且有有效期的凭据。
+- [`src/gogo_agent/travel/tools.py`](src/gogo_agent/travel/tools.py) — 为管理 Agent 装配带可信身份的查询工具与两段式差旅申请提交工具（先签发摘要与令牌，带令牌才写库）。
 - [`src/gogo_agent/travel/policy.py`](src/gogo_agent/travel/policy.py) — 按职级、城市、有效期选择结构化政策并确定性检查金额和舱位。
 - [`src/gogo_agent/travel/policy_seed.json`](src/gogo_agent/travel/policy_seed.json) — 保存版本化政策规则、城市档位与交通衔接时长种子。
 - [`src/gogo_agent/travel/knowledge.py`](src/gogo_agent/travel/knowledge.py) — 离线导入 DOCX 政策片段并按词面检索带来源版本的证据。

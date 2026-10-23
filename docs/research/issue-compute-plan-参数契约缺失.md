@@ -216,3 +216,47 @@ Pydantic 模型作为注解后，AgentScope 的 `_extract_input_schema` 会自�
 ## 十、经验
 
 **结构化契约必须让模型看得见。** 把 Pydantic 校验藏在字符串参数背后，等于把约束留在服务端、把猜测留给模型 —— 而模型猜的永远是“业务上合理”的形状，恰好不是代码要求的形状。
+
+---
+
+## 十一、后续：同类问题在 `get_plan` 上再次出现（已修复）
+
+修复 compute_plan 后，用户报告 `get_plan` 也返回 `PLAN_NOT_FOUND`。诊断结论：**`get_plan` 本身没有缺陷**，是传入的 `plan_id` 在持久化层中不存在。
+
+### 证据
+
+差分测试（同一工具、同一用户、唯一变量是 plan_id）：
+
+```text
+A. 库中真实存在的计划      → success=True
+B. 用户报错的 plan_id      → PLAN_NOT_FOUND
+C. u002 的计划（u001 读）  → PLAN_NOT_FOUND（隔离正常）
+```
+
+排除项：服务 CWD 正确、`.env` 正常加载、未设置 `GOGO_PLAN_STORE`、全库无删除计划路径、身份为 `u001` 无歧义。新建计划已验证可跨进程读回。
+
+### 真正缺陷
+
+| # | 缺陷 | 位置 |
+|---|---|---|
+| 1 | 失败回执不一致：`search_candidates` 的搜索失败带「当前下一步」，但四个工具的计划错误分支全是裸 `_fail(exc.code, str(exc))` | `tools.py` |
+| 2 | 提示词无恢复规则；而规划 Agent 的 AgentState 跨重启持久化，模型会长期复用失效 plan_id | `agent.py` |
+
+### 修复
+
+1. 新增 `_plan_failure(exc)`：`PLAN_NOT_FOUND` 时附带 `field="plan_id"` 与「重新调用 create_plan」的指引；其余错误码保持原样。四处 `except PlanError` 统一走该助手。
+2. 提示词补充：任何工具返回 `PLAN_NOT_FOUND` 即表示 plan_id 已失效，不得复用，应据已知条件重新 `create_plan`。
+
+### 隐私约束
+
+计划不存在与越权访问共用同一错误码（防探测），因此重建提示**不区分两者**、文案完全一致。已加测试锁定：跨用户与不存在返回同一份 message。
+
+### 验证
+
+- 新增 3 个测试：四个工具都回指 `field="plan_id"` 且含 `create_plan`；跨用户文案不泄露；提示词含恢复规则。
+- 反例能力已验证：把回执替回旧行为后，新测试断言失败（红）；恢复后通过（绿）。
+- 全量：`525 passed, 1 failed`（失败为既有 `test_022`，与本改动无关）。
+
+### 未修
+
+`create_plan` 仍非幂等，每次调用生成新 plan_id；重试会持续堆积计划（实测 10 分钟内 16 条）。是否允许同行程多计划属业务决策，未改动。

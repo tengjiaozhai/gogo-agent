@@ -19,7 +19,9 @@ from gogo_agent.integrations.tuniu import TuniuCliAdapter
 from gogo_agent.planning.dependencies import get_plan_service, reset_plan_service
 from gogo_agent.planning.models import PlanConditions, PlanStepName
 from gogo_agent.planning.search import PlanSearchError, TuniuPlanSearch, UnconfiguredTuniuKeys
+from gogo_agent.planning.service import PlanService
 from gogo_agent.planning.simulated import SIMULATED_POLICY, simulated_assessors
+from gogo_agent.planning.store import create_plan_repository
 from gogo_agent.planning.tools import build_plan_toolkit
 from gogo_agent.request_context import RequestContext
 
@@ -73,7 +75,8 @@ def tool_names(toolkit) -> list[str]:
 
 @pytest.fixture(autouse=True)
 def fresh_plan_service():
-    reset_plan_service()
+    """显式注入内存仓储：不依赖环境变量，也不连 `.env` 指向的真实库。"""
+    reset_plan_service(PlanService(create_plan_repository()))
     yield
     reset_plan_service()
 

@@ -517,3 +517,50 @@ def test_044_compute_plan_rejects_string_payload_instead_of_silently_parsing():
     assert result["errorCode"] == "INVALID_PARAM"
     assert result["field"] == "scores"
     assert "必须是对象" in result["message"]
+
+
+# ============================ 044/060 失效 plan_id 的恢复指引 ============================
+
+
+MISSING_PLAN_ID = "ffffffffffffffffffffffffffffffff"
+
+
+def test_044_stale_plan_id_returns_recovery_hint_on_every_plan_tool():
+    """旧 plan_id 失效时四个工具都必须回指参数并给出重建指引，模型才能自纠。"""
+    toolkit = build_plan_toolkit(
+        make_service(), ctx(), search_provider=simulated_provider, assessors=simulated_assessors(),
+    )
+    calls = (
+        ("get_plan", {"plan_id": MISSING_PLAN_ID}),
+        ("search_candidates", {"plan_id": MISSING_PLAN_ID}),
+        ("compute_plan", {"plan_id": MISSING_PLAN_ID}),
+        ("review_plan", {"plan_id": MISSING_PLAN_ID, "proposal_tag": "综合最佳"}),
+    )
+    for name, kwargs in calls:
+        result = call_tool(toolkit, name, **kwargs)
+        assert result["success"] is False, name
+        assert result["errorCode"] == "PLAN_NOT_FOUND", name
+        assert result["field"] == "plan_id", name
+        assert "create_plan" in result["message"], name
+
+
+def test_044_not_found_hint_does_not_reveal_other_users_plan():
+    """重建提示不得泄露他人的计划是否存在：跨用户与不存在必须给出同一份文案。"""
+    service = make_service()
+    others = service.create("u002", CONDITIONS)
+    toolkit = build_plan_toolkit(
+        service, ctx(), search_provider=simulated_provider, assessors=simulated_assessors(),
+    )
+
+    foreign = call_tool(toolkit, "get_plan", plan_id=others.plan_id)
+    missing = call_tool(toolkit, "get_plan", plan_id=MISSING_PLAN_ID)
+
+    assert foreign["errorCode"] == missing["errorCode"] == "PLAN_NOT_FOUND"
+    assert foreign["message"] == missing["message"]
+
+
+def test_044_plan_prompt_instructs_rebuild_instead_of_reusing_stale_id():
+    """提示词必须显式要求重建计划，否则模型会继续用会话里残留的 plan_id。"""
+    assert "PLAN_NOT_FOUND" in PLAN_SYSTEM_PROMPT
+    assert "create_plan" in PLAN_SYSTEM_PROMPT
+    assert "已失效" in PLAN_SYSTEM_PROMPT

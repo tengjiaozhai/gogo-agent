@@ -40,6 +40,22 @@ def _fail(code: str, message: str, *, field: str | None = None) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
+def _plan_failure(exc: PlanError) -> str:
+    """计划类错误回执；PLAN_NOT_FOUND 必须给出重建指引，否则模型会反复使用失效的 plan_id。
+
+    计划不存在与越权访问共用同一错误码（防探测他人计划），因此这里只提示"重新创建"，
+    不会泄露他人的计划是否存在。
+    """
+    if exc.code == "PLAN_NOT_FOUND":
+        return _fail(
+            exc.code,
+            f"{exc}。该 plan_id 已失效，请重新调用 create_plan 取得新的 plan_id，"
+            "再依次调用 search_candidates、compute_plan、review_plan",
+            field="plan_id",
+        )
+    return _fail(exc.code, str(exc))
+
+
 def _invalid_field(name: str, value: Any, model: type) -> str:
     """把 Pydantic 的字段级错误翻译成模型可读的一句中文，指明参数名与期望结构。"""
     try:
@@ -123,7 +139,7 @@ def build_plan_toolkit(
         try:
             plan = service.get(user_id, plan_id)
         except PlanError as exc:
-            return _fail(exc.code, str(exc))
+            return _plan_failure(exc)
         try:
             outcome = search_provider(user_id, plan.conditions)
             candidates = await outcome if inspect.isawaitable(outcome) else outcome
@@ -185,7 +201,7 @@ def build_plan_toolkit(
                 weights=parsed["weights"], weather_summary=weather_summary,
             )
         except PlanError as exc:
-            return _fail(exc.code, str(exc))
+            return _plan_failure(exc)
         return _ok(_summary(plan), "方案已计算")
 
     def get_plan(plan_id: str) -> str:
@@ -193,7 +209,7 @@ def build_plan_toolkit(
         try:
             return _ok(_summary(service.get(user_id, plan_id)))
         except PlanError as exc:
-            return _fail(exc.code, str(exc))
+            return _plan_failure(exc)
 
     async def review_plan(plan_id: str, proposal_tag: str) -> str:
         """对指定代表方案（综合最佳/时间最短/价格最低/最符合偏好）做独立审核；硬规则失败必须整改。"""
@@ -202,7 +218,7 @@ def build_plan_toolkit(
                 user_id, plan_id, proposal_tag=proposal_tag, assessors=assessors, approved=approved,
             )
         except PlanError as exc:
-            return _fail(exc.code, str(exc))
+            return _plan_failure(exc)
         blocking = [issue.evidence for issue in final.arbitration.issues if issue.severity == ReviewVerdict.FAIL]
         return _ok({
             "review_id": final.review_id, "plan_version": final.plan_version,

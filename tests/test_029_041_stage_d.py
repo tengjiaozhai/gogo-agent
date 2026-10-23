@@ -308,3 +308,87 @@ def test_sse_message_id_precedes_recommendations(master_http_case, monkeypatch):
     assert response.status_code == 200
     events = [line for line in response.text.splitlines() if line.startswith("event:")]
     assert events[-2:] == ["event: message_id", "event: suggestions"]
+
+
+# ============================ 031 差旅申请两段式自动提交 ============================
+
+
+async def _call_tool(toolkit, name: str, **kwargs) -> dict:
+    tool = await toolkit.get_tool(name)
+    chunk = await tool.call(**kwargs)
+    return json.loads(chunk.content[0].text)
+
+
+def _manage_toolkit(service, user_id: str = "u001"):
+    return build_manage_toolkit(service, RequestContext(user_id=user_id, session_id="s", request_id="r"))
+
+
+DRAFT = dict(destination="上海", departure_city="北京", departure_date="2026-12-01",
+             return_date="2026-12-03", purpose="客户拜访")
+
+
+@pytest.mark.asyncio
+async def test_031_submit_is_two_phase_and_idempotent(service):
+    toolkit = _manage_toolkit(service)
+    first = await _call_tool(toolkit, "submit_travel_approval", **DRAFT)
+    assert first["errorCode"] == "CONFIRMATION_REQUIRED"
+    token = first["data"]["confirmation_token"]
+    assert token and first["data"]["draft"]["destination"] == "上海"
+    assert service.list_orders("u001") == []
+
+    second = await _call_tool(toolkit, "submit_travel_approval", **DRAFT, confirmation_token=token)
+    assert second["success"] is True
+    assert second["data"]["status"] == "SUBMITTED"
+    order_id = second["data"]["order_id"]
+    assert len(service.list_orders("u001")) == 1
+
+    replay = await _call_tool(toolkit, "submit_travel_approval", **DRAFT, confirmation_token=token)
+    assert replay["success"] is True and replay["data"]["order_id"] == order_id
+    assert len(service.list_orders("u001")) == 1
+
+
+@pytest.mark.asyncio
+async def test_031_token_is_bound_to_draft_and_user(service):
+    toolkit = _manage_toolkit(service)
+    first = await _call_tool(toolkit, "submit_travel_approval", **DRAFT)
+    token = first["data"]["confirmation_token"]
+
+    changed = dict(DRAFT, departure_date="2026-12-05", return_date="2026-12-07")
+    stale = await _call_tool(toolkit, "submit_travel_approval", **changed, confirmation_token=token)
+    assert stale["errorCode"] == "CONFIRMATION_STALE"
+    assert service.list_orders("u001") == []
+
+    other_user = _manage_toolkit(service, "u002")
+    foreign = await _call_tool(other_user, "submit_travel_approval", **DRAFT, confirmation_token=token)
+    assert foreign["errorCode"] == "CONFIRMATION_INVALID"
+    assert service.list_orders("u002") == []
+
+    garbage = await _call_tool(toolkit, "submit_travel_approval", **DRAFT, confirmation_token="forged.token")
+    assert garbage["errorCode"] == "CONFIRMATION_INVALID"
+
+
+@pytest.mark.asyncio
+async def test_031_high_conflict_blocks_submit_until_acknowledged(service):
+    service.submit_order("u001", SubmitTravelRequest(
+        destination="上海", departure_city="北京", departure_date=date(2026, 11, 10),
+        return_date=date(2026, 11, 12), purpose="既有行程",
+        confirmed=True, idempotency_key="seed-conflict",
+    ))
+    toolkit = _manage_toolkit(service)
+    crossing = dict(destination="杭州", departure_city="北京", departure_date="2026-11-11",
+                    return_date="2026-11-13", purpose="另一趟")
+
+    first = await _call_tool(toolkit, "submit_travel_approval", **crossing)
+    assert first["errorCode"] == "CONFIRMATION_REQUIRED"
+    assert first["data"]["high_conflict"] is True
+
+    blocked = await _call_tool(toolkit, "submit_travel_approval", **crossing,
+                               confirmation_token=first["data"]["confirmation_token"])
+    assert blocked["errorCode"] == "CONFLICT_BLOCKING"
+    assert len(service.list_orders("u001")) == 1
+
+    acked = await _call_tool(toolkit, "submit_travel_approval", **crossing, acknowledge_conflicts=True)
+    done = await _call_tool(toolkit, "submit_travel_approval", **crossing,
+                            confirmation_token=acked["data"]["confirmation_token"])
+    assert done["success"] is True
+    assert len(service.list_orders("u001")) == 2
