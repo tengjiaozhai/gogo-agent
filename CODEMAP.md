@@ -19,12 +19,14 @@
 - [`frontend/README.md`](frontend/README.md) — 说明提前迁入的前端范围、启动和检查命令。
 - [`frontend/eslint.config.js`](frontend/eslint.config.js) — 配置 React 与 TypeScript 的静态检查规则。
 - [`frontend/index.html`](frontend/index.html) — 提供 React 页面根节点、标题和图标入口。
-- [`frontend/package.json`](frontend/package.json) — 定义前端依赖与开发、构建、Lint 脚本。
+- [`frontend/package.json`](frontend/package.json) — 定义前端依赖与开发、消息状态测试、构建和 Lint 脚本。
 - [`frontend/package-lock.json`](frontend/package-lock.json) — 锁定前端 npm 依赖版本。
+- [`frontend/pnpm-lock.yaml`](frontend/pnpm-lock.yaml) — 锁定现有 pnpm 前端依赖解析结果。
 - [`frontend/tsconfig.app.json`](frontend/tsconfig.app.json) — 配置浏览器端 TypeScript 编译检查。
 - [`frontend/tsconfig.json`](frontend/tsconfig.json) — 组织前端 TypeScript 项目引用。
 - [`frontend/tsconfig.node.json`](frontend/tsconfig.node.json) — 配置 Vite 运行配置的 TypeScript 检查。
 - [`frontend/vite.config.ts`](frontend/vite.config.ts) — 启用 React 并将开发期 `/api` 代理到 Python 服务。
+- [`frontend/tests/reply-state.test.ts`](frontend/tests/reply-state.test.ts) — 验证消息保存确认、失败摘要、迟到事件与跨会话状态隔离。
 
 ## frontend/public
 
@@ -94,9 +96,10 @@
 - [`src/gogo_agent/chat/config.py`](src/gogo_agent/chat/config.py) — 集中主/信息/管理 Agent 提示词、轮次、模型与工具超时配置及启动校验。
 - [`src/gogo_agent/chat/continuation.py`](src/gogo_agent/chat/continuation.py) — 用可信请求和精确续聊词恢复活跃 InfoAgent，处理过期与无效状态回退。
 - [`src/gogo_agent/chat/models.py`](src/gogo_agent/chat/models.py) — 定义会话、消息领域模型及请求响应视图 DTO。
-- [`src/gogo_agent/chat/repository.py`](src/gogo_agent/chat/repository.py) — 实现内存与 SQL 的业务历史、AgentState 与活跃路由记录存取，并处理已删除会话 ID 的重新归属。
+- [`src/gogo_agent/chat/repository.py`](src/gogo_agent/chat/repository.py) — 实现内存与 SQL 的业务历史、AgentState 与活跃路由存取，原子提交回复及状态，并处理已删除会话 ID 的重新归属。
 - [`src/gogo_agent/chat/service.py`](src/gogo_agent/chat/service.py) — 编排会话创建、归属校验后的历史读取和用户消息保存、标题及反馈。
 - [`src/gogo_agent/chat/executor.py`](src/gogo_agent/chat/executor.py) — 按可信请求运行主/信息/管理 Agent 与活跃续聊，处理 JSON/SSE、推荐及状态记录。
+- [`src/gogo_agent/chat/delegation.py`](src/gogo_agent/chat/delegation.py) — 记录本轮子 Agent 委派及显式重试关系，并复用服务端保留的原始参数。
 - [`src/gogo_agent/chat/trace.py`](src/gogo_agent/chat/trace.py) — 观察真实主子 Agent 事件，脱敏后生成可回放时间轴并以有界队列合并 SSE。
 - [`src/gogo_agent/chat/recommendation.py`](src/gogo_agent/chat/recommendation.py) — 在主答复完成后解析并去重轻量模型生成的后续问题建议。
 - [`src/gogo_agent/chat/dependencies.py`](src/gogo_agent/chat/dependencies.py) — 提供会话仓储、L2 记忆库与执行器的 FastAPI 依赖注入。
@@ -116,8 +119,8 @@
 - [`src/gogo_agent/intent/models.py`](src/gogo_agent/intent/models.py) — 定义改写、意图及三层识别结果的 Pydantic 契约和跨字段校验。
 - [`src/gogo_agent/intent/context.py`](src/gogo_agent/intent/context.py) — 构造经会话归属校验和长度裁剪的最近历史与当前问题快照。
 - [`src/gogo_agent/intent/execution.py`](src/gogo_agent/intent/execution.py) — 显式传递可信上下文，按事项顺序委派可注入子 Agent，聚合结果与追踪并模拟写去重。
-- [`src/gogo_agent/intent/pipeline.py`](src/gogo_agent/intent/pipeline.py) — 用可信请求上下文读取本轮历史，统一快筛、短追问守卫、条件改写和完整识别。
-- [`src/gogo_agent/intent/rules.py`](src/gogo_agent/intent/rules.py) — 执行 L0/L1 优先级规则、复合弃权及明确否定动作的排除。
+- [`src/gogo_agent/intent/pipeline.py`](src/gogo_agent/intent/pipeline.py) — 用可信历史统一快筛、短追问与确认选择的上下文守卫、条件改写和完整识别。
+- [`src/gogo_agent/intent/rules.py`](src/gogo_agent/intent/rules.py) — 执行 L0/L1 动作与对象匹配、类别优先级、复合弃权及明确否定动作的排除。
 - [`src/gogo_agent/intent/runtime.py`](src/gogo_agent/intent/runtime.py) — 从共用环境配置装配聊天模型、embedding、Qdrant 与一次请求的识别流水线。
 - [`src/gogo_agent/intent/seed.json`](src/gogo_agent/intent/seed.json) — 保存从 Java YAML 移植的 16 类 68 条运行时意图种子。
 - [`src/gogo_agent/intent/service.py`](src/gogo_agent/intent/service.py) — 执行单次模型改写与 L3 分类，验证动作保真并编排规则、向量和 LLM 短路。
@@ -131,7 +134,7 @@
 - [`src/gogo_agent/travel/service.py`](src/gogo_agent/travel/service.py) — 编排本人差旅、审批、政策、联系人和预订的确定性业务规则。
 - [`src/gogo_agent/travel/router.py`](src/gogo_agent/travel/router.py) — 暴露已鉴权的本人差旅接口、管理员审批接口和禁用的外部回调。
 - [`src/gogo_agent/travel/dependencies.py`](src/gogo_agent/travel/dependencies.py) — 注入差旅业务服务并在数据库缺业务表时明确拒绝业务请求。
-- [`src/gogo_agent/travel/confirmation.py`](src/gogo_agent/travel/confirmation.py) — 签发与校验差旅申请提交的确认令牌，把「用户已确认」变成服务端可验证、与摘要绑定且有有效期的凭据。
+- [`src/gogo_agent/travel/confirmation.py`](src/gogo_agent/travel/confirmation.py) — 签发与校验用户、会话、签发轮次和申请摘要绑定的确认令牌，限制在后续用户轮次提交。
 - [`src/gogo_agent/travel/tools.py`](src/gogo_agent/travel/tools.py) — 为管理 Agent 装配带可信身份的查询工具与两段式差旅申请提交工具（先签发摘要与令牌，带令牌才写库）。
 - [`src/gogo_agent/travel/policy.py`](src/gogo_agent/travel/policy.py) — 按职级、城市、有效期选择结构化政策并确定性检查金额和舱位。
 - [`src/gogo_agent/travel/policy_seed.json`](src/gogo_agent/travel/policy_seed.json) — 保存版本化政策规则、城市档位与交通衔接时长种子。
@@ -205,6 +208,7 @@
 - [`docs/契约样例/016-017-执行与流水线.md`](docs/契约样例/016-017-执行与流水线.md) — 说明 HTTP 识别流水线、假 Master 顺序执行、断点 demo 与运行边界。
 - [`docs/契约样例/018-意图回归语料.json`](docs/契约样例/018-意图回归语料.json) — 保存误路由与正确样例的固定历史、期望改写和命中层。
 - [`docs/契约样例/018-意图误路由修复.md`](docs/契约样例/018-意图误路由修复.md) — 记录否定动作、短追问和三亚出差等修复前后差异与验收。
+- [`docs/契约样例/018-确认提交与方案选择调试.md`](docs/契约样例/018-确认提交与方案选择调试.md) — 提供确认提交误路由的离线运行、Java/Python 对照、断点、浏览器路线和提交边界。
 - [`docs/契约样例/019-主协调入口与直跳取舍.md`](docs/契约样例/019-主协调入口与直跳取舍.md) — 记录不启用高置信直跳的依据、当前协调入口验收及后续候选条件。
 - [`docs/契约样例/020-执行顺序与续跑边界.md`](docs/契约样例/020-执行顺序与续跑边界.md) — 对照新请求与活跃 Agent 续跑顺序，并提供面向 Java 工程师的逐步调试与验收指南。
 - [`docs/契约样例/021-请求上下文与信任边界.md`](docs/契约样例/021-请求上下文与信任边界.md) — 区分认证上下文与模型可见业务线索，记录传参、伪造身份及追踪验收。
@@ -277,6 +281,7 @@
 - [`scripts/demo_027_active_info.py`](scripts/demo_027_active_info.py) — 用离线 HTTP 演示真实 InfoAgent 活跃记录、精确续聊、回退和跨用户拒绝。
 - [`scripts/demo_028_trusted_identity.py`](scripts/demo_028_trusted_identity.py) — 用固定工具调用和 SQLite 演示伪造身份拒绝与删除会话复用后的归属。
 - [`scripts/demo_execution_trace.py`](scripts/demo_execution_trace.py) — 用固定模型与真实规划工具提供执行时间轴的离线命令和隔离浏览器后端。
+- [`scripts/demo_confirmation_routing.py`](scripts/demo_confirmation_routing.py) — 用固定模型、真实主子 Agent 和隔离 SQLite 演示确认路由、委派重试、两轮提交与幂等。
 - [`scripts/init_stage_d_test_db.py`](scripts/init_stage_d_test_db.py) — 仅在隔离 SQLite 中创建阶段 D 业务表并展示建表前后结果。
 - [`scripts/migrate_stage_d_tables.py`](scripts/migrate_stage_d_tables.py) — 预检并显式创建 `.env` MySQL 中缺失的阶段 D 项目表，核验项目字段注释与关键唯一约束。
 - [`scripts/prepare_stage_d_browser_lab.py`](scripts/prepare_stage_d_browser_lab.py) — 创建不接触 `.env` 数据库的临时 SQLite、测试账号职级与模拟预订，供浏览器调试。
@@ -305,6 +310,8 @@
 - [`tests/__init__.py`](tests/__init__.py) — 标记测试目录为 Python 包。
 - [`tests/test_exercises.py`](tests/test_exercises.py) — 验证 000 系列小练习的输入校验、并发性能与 HTTP 端点行为。
 - [`tests/test_execution_trace.py`](tests/test_execution_trace.py) — 验证真实主子事件、SQLite 回放与权限、脱敏、等待/失败状态、背压和断连清理。
+- [`tests/test_confirmation_routing.py`](tests/test_confirmation_routing.py) — 验证确认与选择的上下文、动作保真及 HTTP JSON/SSE 管理委派、两轮提交和令牌边界。
+- [`tests/test_delegation_retry.py`](tests/test_delegation_retry.py) — 验证显式委派重试、原参数复用、令牌状态保存及未恢复失败的 JSON/SSE 出口。
 - [`tests/test_001.py`](tests/test_001.py) — 验证 001 配置、日期工具、HTTP 健康检查及模拟模型网关调用链。
 - [`tests/test_004_auth.py`](tests/test_004_auth.py) — 验证 004 登录、登出、用户信息隔离、401 拦截与密码哈希自动迁移。
 - [`tests/test_005_chat.py`](tests/test_005_chat.py) — 隔离意图模型后验证会话持久化、AgentState 恢复、用户隔离和 SSE 输出。

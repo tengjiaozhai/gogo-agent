@@ -115,7 +115,8 @@ def build_manage_toolkit(service: TravelBusinessService, request: RequestContext
         """提交差旅申请（两段式）。
 
         第一次调用（不带 confirmation_token）：校验字段与行程冲突，返回待确认摘要和确认令牌，不写库。
-        第二次调用（带第一次拿到的 confirmation_token）：校验令牌与摘要一致后真正创建差旅单并提交审批。
+        后续用户消息明确确认后再次调用（带前一轮的 confirmation_token）：校验令牌、会话与摘要后创建差旅单并提交审批。
+        同一轮先获取令牌再立即提交会被拒绝，必须先把摘要交给用户确认。
 
         Args:
             destination: 目的地城市
@@ -147,11 +148,12 @@ def build_manage_toolkit(service: TravelBusinessService, request: RequestContext
         # 第一段：只签发摘要与令牌，绝不写库。
         if not confirmation_token.strip():
             token = confirmation.issue(
-                user_id, digest, acknowledge_conflicts=acknowledge_conflicts,
+                user_id, digest, session_id=request.session_id, request_id=request.request_id,
+                acknowledge_conflicts=acknowledge_conflicts,
             )
             message = (
                 "请把下面的差旅摘要完整复述给用户并征求明确确认；"
-                "用户确认后带上 confirmation_token 再次调用本工具即可完成提交"
+                "等待后续用户消息明确确认后带上 confirmation_token 再次调用本工具；同一轮不得提交"
             )
             if high_conflicts and not acknowledge_conflicts:
                 message += "。存在高等级行程冲突，须用户明确同意后才能提交"
@@ -164,11 +166,13 @@ def build_manage_toolkit(service: TravelBusinessService, request: RequestContext
 
         # 第二段：令牌必须与当前摘要一致，且用户已知情冲突。
         try:
-            payload = confirmation.verify(confirmation_token.strip(), user_id, digest)
+            payload = confirmation.verify(confirmation_token.strip(), user_id, digest,
+                                          session_id=request.session_id, request_id=request.request_id)
         except confirmation.ConfirmationError as exc:
             return _failure(exc.code, exc.message, data={"draft": draft_payload, "conflicts": conflicts})
         if high_conflicts and not payload.get("ack"):
-            token = confirmation.issue(user_id, digest, acknowledge_conflicts=False)
+            token = confirmation.issue(user_id, digest, session_id=request.session_id,
+                                       request_id=request.request_id, acknowledge_conflicts=False)
             return _failure(
                 "CONFLICT_BLOCKING",
                 "存在高等级行程冲突；用户明确同意忽略冲突后，请带 acknowledge_conflicts=true "

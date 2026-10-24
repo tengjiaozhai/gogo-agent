@@ -194,7 +194,10 @@ def test_http_master_calls_registered_read_only_info_agent_and_records_result(
     assert CHILD_ANSWER in messages[1].content
     assert messages[1].agentName == "GoGo"
     assert messages[1].extra["intent_pipeline"]["dispatch_target"] == "GoGo"
+    attempt_id = messages[1].extra["tool_calls"][0]["attempt_id"]
     assert messages[1].extra["tool_calls"] == [{
+        "attempt_id": attempt_id,
+        "task_id": attempt_id,
         "tool_name": "info_agent",
         "agent_name": "InfoAgent",
         "status": "completed",

@@ -33,6 +33,7 @@ from gogo_agent.planning.search import TuniuPlanSearch, build_tuniu_key_provider
 from gogo_agent.planning.tools import build_plan_toolkit
 
 from .continuation import ActiveAgentContinuation, InfoAgentContinuation, TurnEntry, choose_turn_entry
+from .delegation import DelegationAttempts
 from .config import (
     INFO_SYSTEM_PROMPT, MANAGE_SYSTEM_PROMPT, MODEL_MAX_RETRIES, ChatAgentSettings,
     load_chat_agent_settings, master_system_prompt, require_model_configuration,
@@ -40,6 +41,7 @@ from .config import (
 from .repository import (
     AgentSessionStoreProtocol,
     create_agent_session_store,
+    reply_transaction,
 )
 from .recommendation import generate_recommendations
 from .service import ChatHistoryService
@@ -280,47 +282,36 @@ class ChatAgentExecutor:
         model = self._build_model(stream=stream)
         intents = "、".join(item.intent.value for item in prepared.decision.result.intents)
         tools: list[FunctionTool] = []
+        attempts = DelegationAttempts(tool_calls, request.trace_id)
         has_info = any(item.intent == IntentCategory.GENERAL_INFO for item in prepared.decision.result.intents)
         has_manage = any(item.intent in self.MANAGE_INTENTS for item in prepared.decision.result.intents)
         has_plan = any(item.intent in self.PLAN_INTENTS for item in prepared.decision.result.intents)
         if has_info:
-            async def ask_info_agent(question: str) -> str:
-                """委派普通公共信息问题给只读 InfoAgent，再返回其回答。"""
-                child: Agent | None = None
-                status = "failed"
-                error_type: str | None = None
-                try:
-                    child = self._build_info_agent(request, trace=trace)
-                    async with asyncio.timeout(self._settings.info_tool_timeout_seconds) as deadline:
-                        reply = await child.reply(UserMsg(name=self.COORDINATOR_AGENT_NAME, content=question))
-                    if deadline.expired():
-                        raise TimeoutError("InfoAgent 工具调用超时")
-                    task = asyncio.current_task()
-                    if task is not None and task.cancelling():
-                        raise asyncio.CancelledError
-                    if reply.finished_reason != ReplyFinishedReason.COMPLETED:
-                        raise RuntimeError(f"InfoAgent finished with {reply.finished_reason}")
-                    answer = reply.get_text_content() or ""
-                    if not answer.strip():
-                        raise ValueError("信息子 Agent 没有返回可用回答")
-                    if info_states is not None:
-                        info_states.append(child.state)
-                    status = "completed"
-                    return answer
-                except BaseException as exc:
-                    error_type = type(exc).__name__
-                    raise
-                finally:
-                    record = {
-                        "tool_name": self.INFO_TOOL_NAME,
-                        "agent_name": self.INFO_AGENT_NAME,
-                        "status": status,
-                        "trace_id": request.trace_id,
-                    }
-                    if error_type:
-                        record["error_type"] = error_type
-                    tool_calls.append(record)
-                    await self._close_agent_model(child)
+            async def ask_info_agent(question: str = "", retry_of: str = "") -> str:
+                """委派只读公共信息查询；失败后只填 retry_of 重试，question 留空，复用原问题。"""
+                async def invoke(original_question: str) -> str:
+                    child: Agent | None = None
+                    try:
+                        child = self._build_info_agent(request, trace=trace)
+                        async with asyncio.timeout(self._settings.info_tool_timeout_seconds) as deadline:
+                            reply = await child.reply(UserMsg(name=self.COORDINATOR_AGENT_NAME, content=original_question))
+                        if deadline.expired():
+                            raise TimeoutError("InfoAgent 工具调用超时")
+                        task = asyncio.current_task()
+                        if task is not None and task.cancelling():
+                            raise asyncio.CancelledError
+                        if reply.finished_reason != ReplyFinishedReason.COMPLETED:
+                            raise RuntimeError(f"InfoAgent finished with {reply.finished_reason}")
+                        answer = reply.get_text_content() or ""
+                        if not answer.strip():
+                            raise ValueError("信息子 Agent 没有返回可用回答")
+                        if info_states is not None:
+                            info_states.append(child.state)
+                        return answer
+                    finally:
+                        await self._close_agent_model(child)
+
+                return await attempts.run(self.INFO_TOOL_NAME, self.INFO_AGENT_NAME, question, retry_of, invoke)
 
             tools.append(FunctionTool(
                 ask_info_agent,
@@ -333,99 +324,75 @@ class ChatAgentExecutor:
                 ),
             ))
         if has_manage:
-            async def ask_manage_agent(question: str) -> str:
-                """委派本人差旅管理诉求；数据库写入仍需独立确认入口。"""
-                child: Agent | None = None
-                status = "failed"
-                error_type: str | None = None
-                try:
-                    child = self._build_manage_agent(request, trace=trace)
-                    async with asyncio.timeout(self._settings.manage_tool_timeout_seconds) as deadline:
-                        reply = await child.reply(UserMsg(name=self.COORDINATOR_AGENT_NAME, content=question))
-                    if deadline.expired():
-                        raise TimeoutError("差旅管理 Agent 工具调用超时")
-                    task = asyncio.current_task()
-                    if task is not None and task.cancelling():
-                        raise asyncio.CancelledError
-                    if reply.finished_reason != ReplyFinishedReason.COMPLETED:
-                        raise RuntimeError(f"ManageAgent finished with {reply.finished_reason}")
-                    answer = reply.get_text_content() or ""
-                    if not answer.strip():
-                        raise ValueError("差旅管理 Agent 没有返回可用回答")
-                    if manage_states is not None:
-                        manage_states.append(child.state)
-                    status = "completed"
-                    return answer
-                except BaseException as exc:
-                    error_type = type(exc).__name__
-                    raise
-                finally:
-                    record = {
-                        "tool_name": self.MANAGE_TOOL_NAME,
-                        "agent_name": self.MANAGE_AGENT_NAME,
-                        "status": status,
-                        "trace_id": request.trace_id,
-                    }
-                    if error_type:
-                        record["error_type"] = error_type
-                    tool_calls.append(record)
-                    await self._close_agent_model(child)
+            async def ask_manage_agent(question: str = "", retry_of: str = "") -> str:
+                """委派本人差旅管理，提交须确认令牌；失败后只填 retry_of 重试，question 留空。"""
+                async def invoke(original_question: str) -> str:
+                    child: Agent | None = None
+                    try:
+                        child = self._build_manage_agent(request, trace=trace)
+                        async with asyncio.timeout(self._settings.manage_tool_timeout_seconds) as deadline:
+                            reply = await child.reply(UserMsg(name=self.COORDINATOR_AGENT_NAME, content=original_question))
+                        if deadline.expired():
+                            raise TimeoutError("差旅管理 Agent 工具调用超时")
+                        task = asyncio.current_task()
+                        if task is not None and task.cancelling():
+                            raise asyncio.CancelledError
+                        if reply.finished_reason != ReplyFinishedReason.COMPLETED:
+                            raise RuntimeError(f"ManageAgent finished with {reply.finished_reason}")
+                        answer = reply.get_text_content() or ""
+                        if not answer.strip():
+                            raise ValueError("差旅管理 Agent 没有返回可用回答")
+                        if manage_states is not None:
+                            manage_states.append(child.state)
+                        return answer
+                    finally:
+                        await self._close_agent_model(child)
+
+                return await attempts.run(self.MANAGE_TOOL_NAME, self.MANAGE_AGENT_NAME, question, retry_of, invoke)
 
             tools.append(FunctionTool(
                 ask_manage_agent,
                 name=self.MANAGE_TOOL_NAME,
-                is_read_only=True,
+                is_read_only=False,
                 is_concurrency_safe=False,
                 permission=PermissionDecision(
                     behavior=PermissionBehavior.ALLOW,
-                    message="允许受控差旅管理查询和待确认建议",
+                    message="允许受控差旅管理；提交仍须校验摘要、确认令牌与业务权限",
                 ),
             ))
         if has_plan:
-            async def ask_plan_agent(question: str) -> str:
-                """委派行程规划诉求；候选、方案与审核只形成待确认结果，不预订、不提交差旅单。"""
-                child: Agent | None = None
-                review_model: object | None = None
-                status = "failed"
-                error_type: str | None = None
-                try:
-                    child, review_model = self._build_plan_agent(request, trace=trace)
-                    async with asyncio.timeout(self._settings.plan_tool_timeout_seconds) as deadline:
-                        reply = await child.reply(UserMsg(name=self.COORDINATOR_AGENT_NAME, content=question))
-                    if deadline.expired():
-                        raise TimeoutError("行程规划 Agent 工具调用超时")
-                    task = asyncio.current_task()
-                    if task is not None and task.cancelling():
-                        raise asyncio.CancelledError
-                    if reply.finished_reason != ReplyFinishedReason.COMPLETED:
-                        raise RuntimeError(f"PlanAgent finished with {reply.finished_reason}")
-                    answer = reply.get_text_content() or ""
-                    if not answer.strip():
-                        raise ValueError("行程规划 Agent 没有返回可用回答")
-                    if plan_states is not None:
-                        plan_states.append(child.state)
-                    status = "completed"
-                    return answer
-                except BaseException as exc:
-                    error_type = type(exc).__name__
-                    raise
-                finally:
-                    record = {
-                        "tool_name": self.PLAN_TOOL_NAME,
-                        "agent_name": self.PLAN_AGENT_NAME,
-                        "status": status,
-                        "trace_id": request.trace_id,
-                    }
-                    if error_type:
-                        record["error_type"] = error_type
-                    tool_calls.append(record)
-                    await self._close_agent_model(child)
-                    if review_model is not None:
-                        review_client = getattr(review_model, "client", None)
-                        if review_client is not None:
-                            closed = review_client.close()
-                            if isawaitable(closed):
-                                await closed
+            async def ask_plan_agent(question: str = "", retry_of: str = "") -> str:
+                """委派行程规划，只形成待确认方案；失败后只填 retry_of 重试，question 留空。"""
+                async def invoke(original_question: str) -> str:
+                    child: Agent | None = None
+                    review_model: object | None = None
+                    try:
+                        child, review_model = self._build_plan_agent(request, trace=trace)
+                        async with asyncio.timeout(self._settings.plan_tool_timeout_seconds) as deadline:
+                            reply = await child.reply(UserMsg(name=self.COORDINATOR_AGENT_NAME, content=original_question))
+                        if deadline.expired():
+                            raise TimeoutError("行程规划 Agent 工具调用超时")
+                        task = asyncio.current_task()
+                        if task is not None and task.cancelling():
+                            raise asyncio.CancelledError
+                        if reply.finished_reason != ReplyFinishedReason.COMPLETED:
+                            raise RuntimeError(f"PlanAgent finished with {reply.finished_reason}")
+                        answer = reply.get_text_content() or ""
+                        if not answer.strip():
+                            raise ValueError("行程规划 Agent 没有返回可用回答")
+                        if plan_states is not None:
+                            plan_states.append(child.state)
+                        return answer
+                    finally:
+                        await self._close_agent_model(child)
+                        if review_model is not None:
+                            review_client = getattr(review_model, "client", None)
+                            if review_client is not None:
+                                closed = review_client.close()
+                                if isawaitable(closed):
+                                    await closed
+
+                return await attempts.run(self.PLAN_TOOL_NAME, self.PLAN_AGENT_NAME, question, retry_of, invoke)
 
             tools.append(FunctionTool(
                 ask_plan_agent,
@@ -526,24 +493,25 @@ class ChatAgentExecutor:
         except Exception as exc:
             raise HTTPException(503, f"活跃 Agent 续跑失败（{type(exc).__name__}）") from None
         try:
-            msg_id = self._history_service.save_assistant_message(
-                conversation_id=request.session_id, user_id=request.user_id, content=result.text,
-                agent_name=agent_name,
-                extra={
-                    "turn_entry": TurnEntry.CONTINUE_ACTIVE.value,
-                    "active_agent": agent_name,
-                    "request_id": request.request_id,
-                    "trace_id": request.trace_id,
-                    "timeline": trace.timeline if trace is not None else [],
-                },
-            )
-            if result.state is not None:
-                self._session_store.save_agent_state(
-                    self._state_session_id(request.session_id, request.user_id),
-                    result.state,
+            with reply_transaction(self._history_service.repository, self._session_store):
+                msg_id = self._history_service.save_assistant_message(
+                    conversation_id=request.session_id, user_id=request.user_id, content=result.text,
                     agent_name=agent_name,
+                    extra={
+                        "turn_entry": TurnEntry.CONTINUE_ACTIVE.value,
+                        "active_agent": agent_name,
+                        "request_id": request.request_id,
+                        "trace_id": request.trace_id,
+                        "timeline": trace.timeline if trace is not None else [],
+                    },
                 )
-                self._active_continuation.record_completed_agent(request, agent_name)
+                if result.state is not None:
+                    self._session_store.save_agent_state(
+                        self._state_session_id(request.session_id, request.user_id),
+                        result.state,
+                        agent_name=agent_name,
+                    )
+                    self._active_continuation.record_completed_agent(request, agent_name)
         except Exception as exc:
             raise HTTPException(503, f"活跃 Agent 回复保存失败（{type(exc).__name__}）") from None
         return result.text, msg_id
@@ -587,8 +555,12 @@ class ChatAgentExecutor:
     def _completion_error(
         tool_calls: list[dict[str, str]], reason: ReplyFinishedReason | None,
     ) -> str | None:
-        """不把工具失败、中断或轮次耗尽保存为成功回复。"""
-        failed = next((call for call in tool_calls if call["status"] == "failed"), None)
+        """按显式重试链的最终结果判定；不同任务的成功不能覆盖失败。"""
+        outcomes = {
+            (call.get("tool_name"), call.get("task_id", index)): call
+            for index, call in enumerate(tool_calls)
+        }
+        failed = next((call for call in outcomes.values() if call["status"] == "failed"), None)
         if failed:
             return f"子 Agent 调用失败（{failed.get('error_type', 'ToolError')}）"
         if reason == ReplyFinishedReason.EXCEED_MAX_ITERS:
@@ -673,33 +645,34 @@ class ChatAgentExecutor:
                 raise HTTPException(503, error)
             reply_text = reply_msg.get_text_content() or ""
 
-            # 先保存业务可见回复；失败时不得写入一份看不到的 AgentState。
-            msg_id = self._history_service.save_assistant_message(
-                conversation_id=request.session_id,
-                user_id=request.user_id,
-                content=reply_text,
-                agent_name=self.COORDINATOR_AGENT_NAME,
-                extra=self._pipeline_extra(prepared, request, tool_calls, trace),
-            )
+            with reply_transaction(self._history_service.repository, self._session_store):
+                # 先保存业务可见回复；失败时不得写入一份看不到的 AgentState。
+                msg_id = self._history_service.save_assistant_message(
+                    conversation_id=request.session_id,
+                    user_id=request.user_id,
+                    content=reply_text,
+                    agent_name=self.COORDINATOR_AGENT_NAME,
+                    extra=self._pipeline_extra(prepared, request, tool_calls, trace),
+                )
 
-            # 可见回复成功保存后才提交 AgentState；失败轮次不推进子 Agent 记忆。
-            if info_states:
+                # 可见回复成功保存后才提交 AgentState；失败轮次不推进子 Agent 记忆。
+                if info_states:
+                    self._session_store.save_agent_state(
+                        state_session_id, info_states[-1], agent_name=self.INFO_AGENT_NAME,
+                    )
+                if manage_states:
+                    self._session_store.save_agent_state(
+                        state_session_id, manage_states[-1], agent_name=self.MANAGE_AGENT_NAME,
+                    )
+                if plan_states:
+                    self._session_store.save_agent_state(
+                        state_session_id, plan_states[-1], agent_name=self.PLAN_AGENT_NAME,
+                    )
                 self._session_store.save_agent_state(
-                    state_session_id, info_states[-1], agent_name=self.INFO_AGENT_NAME,
+                    state_session_id, agent.state, agent_name=self.COORDINATOR_AGENT_NAME,
                 )
-            if manage_states:
-                self._session_store.save_agent_state(
-                    state_session_id, manage_states[-1], agent_name=self.MANAGE_AGENT_NAME,
-                )
-            if plan_states:
-                self._session_store.save_agent_state(
-                    state_session_id, plan_states[-1], agent_name=self.PLAN_AGENT_NAME,
-                )
-            self._session_store.save_agent_state(
-                state_session_id, agent.state, agent_name=self.COORDINATOR_AGENT_NAME,
-            )
-            if info_states:
-                self._active_continuation.record_completed_agent(request, self.INFO_AGENT_NAME)
+                if info_states:
+                    self._active_continuation.record_completed_agent(request, self.INFO_AGENT_NAME)
 
             return reply_text, msg_id
 
@@ -845,32 +818,33 @@ class ChatAgentExecutor:
 
         # 先保存业务可见回复；失败时不提交新 AgentState。
         try:
-            msg_id = self._history_service.save_assistant_message(
-                conversation_id=request.session_id,
-                user_id=request.user_id,
-                content=full_reply_text,
-                agent_name=self.COORDINATOR_AGENT_NAME,
-                extra=self._pipeline_extra(prepared, request, tool_calls, trace),
-            )
+            with reply_transaction(self._history_service.repository, self._session_store):
+                msg_id = self._history_service.save_assistant_message(
+                    conversation_id=request.session_id,
+                    user_id=request.user_id,
+                    content=full_reply_text,
+                    agent_name=self.COORDINATOR_AGENT_NAME,
+                    extra=self._pipeline_extra(prepared, request, tool_calls, trace),
+                )
 
-            # 再提交本轮 AgentState；若失败，SSE 不报完成。
-            if info_states:
+                # 再提交本轮 AgentState；若失败，SSE 不报完成。
+                if info_states:
+                    self._session_store.save_agent_state(
+                        state_session_id, info_states[-1], agent_name=self.INFO_AGENT_NAME,
+                    )
+                if manage_states:
+                    self._session_store.save_agent_state(
+                        state_session_id, manage_states[-1], agent_name=self.MANAGE_AGENT_NAME,
+                    )
+                if plan_states:
+                    self._session_store.save_agent_state(
+                        state_session_id, plan_states[-1], agent_name=self.PLAN_AGENT_NAME,
+                    )
                 self._session_store.save_agent_state(
-                    state_session_id, info_states[-1], agent_name=self.INFO_AGENT_NAME,
+                    state_session_id, agent.state, agent_name=self.COORDINATOR_AGENT_NAME,
                 )
-            if manage_states:
-                self._session_store.save_agent_state(
-                    state_session_id, manage_states[-1], agent_name=self.MANAGE_AGENT_NAME,
-                )
-            if plan_states:
-                self._session_store.save_agent_state(
-                    state_session_id, plan_states[-1], agent_name=self.PLAN_AGENT_NAME,
-                )
-            self._session_store.save_agent_state(
-                state_session_id, agent.state, agent_name=self.COORDINATOR_AGENT_NAME,
-            )
-            if info_states:
-                self._active_continuation.record_completed_agent(request, self.INFO_AGENT_NAME)
+                if info_states:
+                    self._active_continuation.record_completed_agent(request, self.INFO_AGENT_NAME)
         except Exception as exc:
             yield f"event: error\ndata: 回复保存失败（{type(exc).__name__}）\n\n"
             return

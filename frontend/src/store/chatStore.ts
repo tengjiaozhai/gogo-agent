@@ -47,7 +47,9 @@ interface ChatState {
 
   // Actions on current conversation
   addMessage: (msg: Message) => void;
-  appendToLastAgentMessage: (text: string) => void;
+  appendAgentReply: (conversationId: string, replyId: string, text: string) => void;
+  completeAgentReply: (conversationId: string, replyId: string, messageId: string) => void;
+  failAgentReply: (conversationId: string, replyId: string, reason: string) => void;
   addProgressStep: (step: PlanStep) => void;
   /** 更新 ItineraryPlanAgent 任务列表 */
   updatePlanTasks: (tasks: PlanTask[]) => void;
@@ -79,11 +81,6 @@ interface ChatState {
     feedback: 'LIKE' | 'DISLIKE' | null,
     feedbackAt?: number,
   ) => void;
-  /**
-   * 用后端下发的持久化 messageId 回填最后一条 agent 消息的 id。
-   * 流式渲染时 id 是本地随机生成的（如 y11ibk1w），不能用于反馈接口。
-   */
-  setLastAgentMessageId: (messageId: string) => void;
 }
 
 const generateId = () => Math.random().toString(36).slice(2, 10);
@@ -126,6 +123,16 @@ const createNewConversation = (): Conversation => ({
 });
 
 const initialConversation = createNewConversation();
+
+function replySnapshot(conversation: Conversation): Partial<Message> {
+  return {
+    timeline: [...conversation.timeline],
+    progress: conversation.planProgress ?? undefined,
+    thinkingByAgent: { ...conversation.thinkingByAgent },
+    planTasks: [...conversation.planTasks],
+    travelData: [...conversation.travelData],
+  };
+}
 
 export const useChatStore = create<ChatState>((set, get) => ({
   conversations: [initialConversation],
@@ -208,24 +215,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }),
     })),
 
-  appendToLastAgentMessage: (text) =>
+  appendAgentReply: (conversationId, replyId, text) =>
     set((state) => ({
       conversations: state.conversations.map((c) => {
-        if (c.id !== state.currentConversationId) return c;
-        const msgs = [...c.messages];
-        const last = msgs[msgs.length - 1];
-        if (last && last.role === 'agent') {
-          msgs[msgs.length - 1] = { ...last, content: last.content + text };
-        } else {
-          msgs.push({
-            id: generateId(),
-            role: 'agent',
-            content: text,
-            agentName: c.activeAgent,
-            timestamp: Date.now(),
-          });
-        }
-        return { ...c, messages: msgs, updatedAt: Date.now() };
+        if (c.id !== conversationId) return c;
+        return { ...c, messages: c.messages.map((msg) =>
+          msg.id === replyId && msg.replyStatus === 'streaming'
+            ? { ...msg, content: msg.content + text } : msg), updatedAt: Date.now() };
       }),
     })),
 
@@ -465,18 +461,28 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }),
     })),
 
-  setLastAgentMessageId: (messageId) =>
+  completeAgentReply: (conversationId, replyId, messageId) =>
     set((state) => ({
       conversations: state.conversations.map((c) => {
-        if (c.id !== state.currentConversationId) return c;
-        const msgs = [...c.messages];
-        const lastIdx = msgs.length - 1;
-        const last = msgs[lastIdx];
-        // 仅回填本轮刚渲染出的流式回复（必为最后一条 agent 消息），
-        // 且已拿到过持久化 id 时不再覆盖，避免改错已有消息的 id
-        if (!last || last.role !== 'agent' || isPersistedMessageId(last.id)) return c;
-        msgs[lastIdx] = { ...last, id: messageId };
-        return { ...c, messages: msgs };
+        if (c.id !== conversationId || !isPersistedMessageId(messageId)) return c;
+        if (!c.messages.some((msg) => msg.id === replyId && msg.replyStatus === 'streaming')) return c;
+        return { ...c, isThinking: false, messages: c.messages.map((msg) =>
+          msg.id === replyId
+            ? { ...msg, ...replySnapshot(c), id: messageId, replyStatus: 'completed' as const } : msg) };
+      }),
+    })),
+
+  failAgentReply: (conversationId, replyId, reason) =>
+    set((state) => ({
+      conversations: state.conversations.map((c) => {
+        if (c.id !== conversationId) return c;
+        if (!c.messages.some((msg) => msg.id === replyId && msg.replyStatus === 'streaming')) return c;
+        return {
+          ...c, isThinking: false, suggestedQuestions: [],
+          timeline: [], planProgress: null, planTasks: [], thinkingByAgent: {}, travelData: [],
+          messages: c.messages.map((msg) => msg.id === replyId
+            ? { ...msg, ...replySnapshot(c), replyStatus: 'failed' as const, replyError: reason } : msg),
+        };
       }),
     })),
 }));

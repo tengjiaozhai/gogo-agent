@@ -35,7 +35,7 @@ def pipeline_request(session_id: str, request_id: str) -> RequestContext:
 
 def test_corpus_has_unique_cases_and_valid_category_contract():
     assert CORPUS["schema_version"] == 1
-    assert len(CASES) == len(CORPUS["cases"]) == 14
+    assert len(CASES) == len(CORPUS["cases"]) == 17
     for case in CASES.values():
         assert case["question"] and case["source"] and case["before"]
         assert set(case["expected"]["intents"]) <= {item.value for item in IntentCategory}

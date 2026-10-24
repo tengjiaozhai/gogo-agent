@@ -297,14 +297,14 @@ function PlanHtmlBlock({ data }: { data: PlanHtmlData }) {
 }
 
 // ── Markdown content ──────────────────────────────────────────────────────
-function MarkdownContent({ content }: { content: string }) {
+function MarkdownContent({ content, inactive = false }: { content: string; inactive?: boolean }) {
   if (!content.trim()) return null;
   return (
     <div className="msg-agent-bubble markdown-body">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
-          a: ({ href, children, ...props }) => (
+          a: ({ href, children, ...props }) => inactive ? <span>{children}</span> : (
             <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
               {children}
             </a>
@@ -403,6 +403,7 @@ function FeedbackButtons({
 }
 
 export default function AgentMessageBlock({ msg, liveTimeline = [], isStreaming, onFeedback }: Props) {
+  const failed = msg.replyStatus === 'failed';
   const timeline = msg.timeline && msg.timeline.length > 0 ? msg.timeline : liveTimeline;
   const hasContent = msg.content.trim().length > 0;
   const lastIdx = timeline.length - 1;
@@ -446,6 +447,7 @@ export default function AgentMessageBlock({ msg, liveTimeline = [], isStreaming,
                   return <PlanBlock key={`plan-${idx}`} tasks={item.tasks} />;
                 }
                 if (item.kind === 'travel') {
+                  if (failed) return null;
                   if (!TRAVEL_ALLOWED.has(item.data.type)) return null;
                   return (
                     <div key={`travel-${idx}`} className="timeline-travel">
@@ -454,6 +456,7 @@ export default function AgentMessageBlock({ msg, liveTimeline = [], isStreaming,
                   );
                 }
                 if (item.kind === 'booking') {
+                  if (failed) return null;
                   return (
                     <div key={`booking-${idx}`} className="timeline-booking">
                       <BookingResultCard data={item.data} />
@@ -461,6 +464,7 @@ export default function AgentMessageBlock({ msg, liveTimeline = [], isStreaming,
                   );
                 }
                 if (item.kind === 'plan_html') {
+                  if (failed) return null;
                   return <PlanHtmlBlock key={`plan-html-${idx}`} data={item.data} />;
                 }
                 return null;
@@ -468,10 +472,18 @@ export default function AgentMessageBlock({ msg, liveTimeline = [], isStreaming,
             </div>
           )}
 
-          {hasContent && <>
+          {failed && <div className="reply-failure-note" role="alert">
+            <strong>本轮未完成，摘要无效</strong>
+            <p>以下内容不能作为确认或提交依据，请重新获取摘要。</p>
+            {msg.replyError && <p>{msg.replyError}</p>}
+          </div>}
+          {hasContent && (failed ? <details className="reply-failed-content">
+            <summary>查看未完成的回复</summary>
+            <MarkdownContent content={msg.content} inactive />
+          </details> : <>
             {timeline.length > 0 && <h3 className="timeline-answer-label">{agentDisplayName(msg.agentName)} · 回复</h3>}
             <MarkdownContent content={msg.content} />
-          </>}
+          </>)}
 
           {isStreaming && !hasContent && (
             <div className="thinking-indicator">
@@ -489,7 +501,8 @@ export default function AgentMessageBlock({ msg, liveTimeline = [], isStreaming,
               minute: '2-digit',
             })}
           </div>
-          <FeedbackButtons messageId={msg.id} current={msg.feedback} onFeedback={onFeedback!} />
+          {!failed && msg.replyStatus !== 'streaming' &&
+            <FeedbackButtons messageId={msg.id} current={msg.feedback} onFeedback={onFeedback!} />}
         </div>
       </div>
     </div>

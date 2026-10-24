@@ -1,11 +1,34 @@
 """Repository layer for chat history (L1) and AgentScope Agent state (L2)."""
 
 from datetime import datetime, timezone
+from contextlib import contextmanager
+from contextvars import ContextVar
+from copy import deepcopy
 from typing import Optional, Protocol
 from agentscope.state import AgentState
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+from sqlalchemy.orm import Session
 
 from .models import ChatConversation, ChatMessage
+
+
+_reply_sql_session: ContextVar[Session | None] = ContextVar("reply_sql_session", default=None)
+
+
+@contextmanager
+def _repository_session(factory, *, write=False):
+    """回复事务中的仓储共用同一 SQL Session；单独调用仍自行管理提交。"""
+    shared = _reply_sql_session.get()
+    if shared is not None:
+        if shared.get_bind() is not factory.kw.get("bind"):
+            raise ValueError("聊天回复和 AgentState 必须使用同一数据库")
+        yield shared
+        if write:
+            # 默认生产配置关闭 autoflush，后续活跃路由检查仍须能读取本事务新状态。
+            shared.flush()
+    else:
+        with (factory.begin() if write else factory()) as session:
+            yield session
 
 
 class ActiveAgentRecord(BaseModel):
@@ -236,7 +259,7 @@ class SQLChatHistoryRepository:
         from sqlalchemy import select
         from gogo_agent.db.models import ChatConversationModel
 
-        with self._session_factory() as session:
+        with _repository_session(self._session_factory) as session:
             stmt = select(ChatConversationModel).where(
                 ChatConversationModel.conversation_id == conversation_id,
                 ChatConversationModel.deleted == 0,
@@ -378,7 +401,7 @@ class SQLChatHistoryRepository:
         from sqlalchemy import select, update
         from gogo_agent.db.models import ChatConversationModel, ChatMessageModel
 
-        with self._session_factory() as session:
+        with _repository_session(self._session_factory, write=True) as session:
             stmt = select(ChatMessageModel).where(
                 ChatMessageModel.message_id == message.message_id
             )
@@ -414,7 +437,6 @@ class SQLChatHistoryRepository:
                 .values(updated_at=now)
             )
             session.execute(up_stmt)
-            session.commit()
 
     def update_feedback(
         self,
@@ -458,7 +480,7 @@ class SQLAgentSessionStore:
         from gogo_agent.db.models import AgentScopeSessionModel
 
         key = self._make_key(session_id, agent_name)
-        with self._session_factory() as session:
+        with _repository_session(self._session_factory) as session:
             stmt = select(AgentScopeSessionModel).where(
                 AgentScopeSessionModel.session_id == key,
                 AgentScopeSessionModel.state_key == "agent_state",
@@ -477,7 +499,7 @@ class SQLAgentSessionStore:
 
         key = self._make_key(session_id, agent_name)
         json_data = state.model_dump_json()
-        with self._session_factory() as session:
+        with _repository_session(self._session_factory, write=True) as session:
             stmt = select(AgentScopeSessionModel).where(
                 AgentScopeSessionModel.session_id == key,
                 AgentScopeSessionModel.state_key == "agent_state",
@@ -498,7 +520,6 @@ class SQLAgentSessionStore:
                     updated_at=now,
                 )
                 session.add(row)
-            session.commit()
 
     def delete_agent_state(self, session_id: str, agent_name: str = "GoGo") -> None:
         if not self._session_factory:
@@ -534,7 +555,7 @@ class SQLAgentSessionStore:
         from gogo_agent.db.models import AgentScopeSessionModel
 
         key = self._make_key(session_id, "router")
-        with self._session_factory() as session:
+        with _repository_session(self._session_factory, write=True) as session:
             row = session.scalar(select(AgentScopeSessionModel).where(
                 AgentScopeSessionModel.session_id == key,
                 AgentScopeSessionModel.state_key == "active_agent",
@@ -554,7 +575,6 @@ class SQLAgentSessionStore:
             else:
                 row.state_data = record.model_dump_json()
                 row.updated_at = now
-            session.commit()
 
     def delete_active_agent(self, session_id: str) -> None:
         if not self._session_factory:
@@ -571,6 +591,30 @@ class SQLAgentSessionStore:
 
 
 # ===================== Factory Functions =====================
+
+
+@contextmanager
+def reply_transaction(history: ChatHistoryRepositoryProtocol, states: AgentSessionStoreProtocol):
+    """把可见回复、AgentState 和活跃路由作为一次提交；失败时保留上一轮状态。"""
+    if isinstance(history, SQLChatHistoryRepository) and isinstance(states, SQLAgentSessionStore):
+        if (history._session_factory is None or states._session_factory is None
+                or history._session_factory.kw.get("bind") is not states._session_factory.kw.get("bind")):
+            raise ValueError("聊天回复和 AgentState 必须共用同一数据库")
+        with history._session_factory.begin() as session:
+            token = _reply_sql_session.set(session)
+            try:
+                yield
+            finally:
+                _reply_sql_session.reset(token)
+    elif isinstance(history, InMemoryChatHistoryRepository) and isinstance(states, InMemoryAgentSessionStore):
+        snapshot = deepcopy((history._conversations, history._messages, states._states, states._active_agents))
+        try:
+            yield
+        except BaseException:
+            history._conversations, history._messages, states._states, states._active_agents = snapshot
+            raise
+    else:
+        raise TypeError("聊天回复和 AgentState 必须使用成对的 SQL 或内存仓储")
 
 
 def create_chat_history_repository() -> ChatHistoryRepositoryProtocol:

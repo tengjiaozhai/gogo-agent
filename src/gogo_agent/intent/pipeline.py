@@ -10,7 +10,7 @@ from gogo_agent.request_context import RequestContext
 
 from .context import RewriteContextBuilder
 from .models import QueryInput, RecognitionDecision, RewriteResult
-from .rules import _affirmative_text
+from .rules import _affirmative_text, requires_action_context
 from .service import IntentRecognizer, QueryRewriter
 
 
@@ -23,7 +23,8 @@ def _requires_rewrite_before_fast(query: QueryInput) -> bool:
     """短追问缺少动作或带指代时，不能靠原句向量相似度抢先定类。"""
     text = _affirmative_text(query.question)
     return bool(
-        _REFERENCE_WORD.search(text)
+        requires_action_context(text)
+        or _REFERENCE_WORD.search(text)
         or (
             len(text) <= 16
             and _ELLIPTIC_END.search(text)
@@ -108,7 +109,7 @@ class IntentPipelineService:
             fast = RecognitionDecision(
                 result=None, hit_layer=None, confidence=None,
                 vector_threshold=None, candidates=[], attempted_layers=[],
-                reason="018 短追问含指代或省略动作，先结合历史改写，避免原句向量误命中",
+                reason="018 短追问、确认或选择缺少明确对象，先结合历史改写，避免原句向量误命中",
             )
             if not context.history:
                 rewrite = RewriteResult(

@@ -3720,3 +3720,24 @@ html, body {
   font-size: 12px;
   color: #ad8b00;
 }
+.reply-failure-note {
+  border: 1px solid #ffccc7;
+  border-radius: 10px;
+  padding: 12px 16px;
+  margin-bottom: 12px;
+  color: #a8071a;
+  background: #fff2f0;
+  overflow-wrap: anywhere;
+}
+
+.reply-failure-note p {
+  margin: 6px 0 0;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.reply-failed-content > summary {
+  cursor: pointer;
+  color: #8c8c8c;
+  padding: 8px 0;
+}

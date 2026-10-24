@@ -81,7 +81,7 @@ def test_model_supplied_user_id_and_session_id_cannot_select_another_users_info(
     assert response.status_code == 200
     assert schemas
     properties = schemas[0]["function"]["parameters"]["properties"]
-    assert set(properties) == {"question"}
+    assert set(properties) == {"question", "retry_of"}
     assert captured_requests == []
     assert history.list_messages("alice-028", "u001")[0].content == "请介绍一处景点"
     assert client.get("/api/chat/alice-028/messages", headers=bob).status_code == 403

@@ -319,8 +319,8 @@ async def _call_tool(toolkit, name: str, **kwargs) -> dict:
     return json.loads(chunk.content[0].text)
 
 
-def _manage_toolkit(service, user_id: str = "u001"):
-    return build_manage_toolkit(service, RequestContext(user_id=user_id, session_id="s", request_id="r"))
+def _manage_toolkit(service, user_id: str = "u001", *, request_id: str = "r"):
+    return build_manage_toolkit(service, RequestContext(user_id=user_id, session_id="s", request_id=request_id))
 
 
 DRAFT = dict(destination="上海", departure_city="北京", departure_date="2026-12-01",
@@ -336,13 +336,14 @@ async def test_031_submit_is_two_phase_and_idempotent(service):
     assert token and first["data"]["draft"]["destination"] == "上海"
     assert service.list_orders("u001") == []
 
-    second = await _call_tool(toolkit, "submit_travel_approval", **DRAFT, confirmation_token=token)
+    confirmed_toolkit = _manage_toolkit(service, request_id="confirmed-user-turn")
+    second = await _call_tool(confirmed_toolkit, "submit_travel_approval", **DRAFT, confirmation_token=token)
     assert second["success"] is True
     assert second["data"]["status"] == "SUBMITTED"
     order_id = second["data"]["order_id"]
     assert len(service.list_orders("u001")) == 1
 
-    replay = await _call_tool(toolkit, "submit_travel_approval", **DRAFT, confirmation_token=token)
+    replay = await _call_tool(confirmed_toolkit, "submit_travel_approval", **DRAFT, confirmation_token=token)
     assert replay["success"] is True and replay["data"]["order_id"] == order_id
     assert len(service.list_orders("u001")) == 1
 
@@ -382,13 +383,15 @@ async def test_031_high_conflict_blocks_submit_until_acknowledged(service):
     assert first["errorCode"] == "CONFIRMATION_REQUIRED"
     assert first["data"]["high_conflict"] is True
 
-    blocked = await _call_tool(toolkit, "submit_travel_approval", **crossing,
+    confirmed_toolkit = _manage_toolkit(service, request_id="conflict-review-turn")
+    blocked = await _call_tool(confirmed_toolkit, "submit_travel_approval", **crossing,
                                confirmation_token=first["data"]["confirmation_token"])
     assert blocked["errorCode"] == "CONFLICT_BLOCKING"
     assert len(service.list_orders("u001")) == 1
 
-    acked = await _call_tool(toolkit, "submit_travel_approval", **crossing, acknowledge_conflicts=True)
-    done = await _call_tool(toolkit, "submit_travel_approval", **crossing,
+    acked = await _call_tool(confirmed_toolkit, "submit_travel_approval", **crossing, acknowledge_conflicts=True)
+    final_toolkit = _manage_toolkit(service, request_id="conflict-confirmed-turn")
+    done = await _call_tool(final_toolkit, "submit_travel_approval", **crossing,
                             confirmation_token=acked["data"]["confirmation_token"])
     assert done["success"] is True
     assert len(service.list_orders("u001")) == 2

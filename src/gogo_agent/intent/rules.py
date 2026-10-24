@@ -29,9 +29,17 @@ _ACTION_PATTERN = re.compile(
     r"|(?P<apply>申请|提交|发起)|(?P<reimburse>报销)"
     r"|(?P<cancel>取消|撤回)|(?P<modify>修改|变更|改签|退票)"
     r"|(?P<book>预[定订]|下单|订(?!单))"
+    r"|(?P<select>(?:选择|选中|选用|就选|我选择|我选)(?=.{0,100}(?:方案|计划)))"
 )
+_BARE_CONFIRMATION = re.compile(r"(?:请帮我|请|帮我|我)?(?:确认|确定|同意|好的|好|是的)(?:提交)?|(?:请|帮我)?提交")
+_BARE_PLAN_SELECTION = re.compile(
+    r"(?:选择|选中|选用|就选|我选择|我选)(?:(?:行程|出行)的?)?"
+    r"(?:综合最佳|价格最低|时间最短|最符合偏好|第[一二三四五\d]+[个种套]?|这个|该|上述|以上)?"
+    r"(?:行程|出行)?(?:方案|计划)"
+)
+_QUESTION_PATTERN = re.compile(r"多少|怎么|如何|哪些|哪家|哪里|哪儿|是否|能否|[吗么？?]")
 _NEGATED_ACTION_PREFIXES = (
-    "不想", "不要", "不用", "无需", "不需", "不需要", "不打算", "不准备", "不能", "不再", "别", "不",
+    "不想", "不要", "不用", "无需", "不需", "不需要", "不必", "请勿", "不打算", "不准备", "不能", "不再", "别", "不",
 )
 _NEGATED_ACTION_PATTERN = re.compile(
     rf"(?:{'|'.join(re.escape(prefix) for prefix in _NEGATED_ACTION_PREFIXES)})"
@@ -57,6 +65,24 @@ def _affirmative_text(text: str) -> str:
         return ""
 
     return _NEGATED_ACTION_PATTERN.sub(retain_or_remove, text)
+
+
+def requires_action_context(text: str) -> bool:
+    """确认缺少对象或只指向某个方案时先承接历史，不把方案名当提交对象。"""
+    text = _affirmative_text(text).strip(" ，。；！？!?;,. ")
+    if _BARE_CONFIRMATION.fullmatch(text):
+        return True
+    action = _ACTION_PATTERN.search(text)
+    if action is None or action.start() > 5:
+        return False
+    if action.lastgroup == "select":
+        label = re.split(r"[（(]", text[action.start():], maxsplit=1)[0].strip()
+        return re.search(r"(?:行程|出行).{0,12}(?:方案|计划)", text) is None or bool(_BARE_PLAN_SELECTION.fullmatch(label))
+    return bool(
+        action.lastgroup == "apply"
+        and re.search(r"方案|计划|这个|这份|上述|以上", text)
+        and not re.search(r"差旅|出差|申请|报销|审批|订单", text)
+    )
 
 
 _GREET = (
@@ -148,7 +174,8 @@ _RULES = (
     _rule(IntentCategory.ITINERARY_PLANNING, r"(安排.*行程|帮我安排一下)", "出差", "差旅"),
     _rule(
         IntentCategory.ITINERARY_PLANNING,
-        r"(规划.*行程|做.*行程|行程规划|行程安排|行程方案|出行方案|做一份行程|出一份行程|做个行程|帮我规划|规划一下)",
+        r"(规划.*行程|做.*行程|行程规划|行程安排|行程方案|出行方案|做一份行程|出一份行程|做个行程|帮我规划|规划一下"
+        r"|(?:选择|选中|选用|就选|我选择|我选).{0,100}(?:行程|出行).{0,12}(?:方案|计划))",
     ),
     _rule(
         IntentCategory.FLIGHT_SEARCH,
@@ -178,11 +205,20 @@ _RULES = (
 
 
 def _first_match(text: str) -> tuple[_Rule, str] | None:
+    matches: list[tuple[_Rule, re.Match]] = []
     for rule in _RULES:
         positive = rule.keyword.search(text)
         if positive and not any(negative.search(text) for negative in rule.negative_keywords):
-            return rule, positive.group(0)
-    return None
+            matches.append((rule, positive))
+    action = _ACTION_PATTERN.search(text)
+    if action is not None and action.start() <= 5 and action.lastgroup != "query":
+        # 命中片段必须解释当前动作，后面的酒店/机票名词不能抢占提交或选择。
+        for rule, positive in matches:
+            if positive.start() <= action.start() < positive.end():
+                return rule, positive.group(0)
+        if action.lastgroup in {"apply", "select", "plan"}:
+            return None
+    return (matches[0][0], matches[0][1].group(0)) if matches else None
 
 
 class IntentRuleMatcher:
@@ -213,13 +249,26 @@ class IntentRuleMatcher:
                 status=MatchStatus.AMBIGUOUS, result=None,
                 reason="L1 仅有明确否定的动作，不把它当作待办理意图；交给 L3",
             )
+        if requires_action_context(text):
+            return FastMatch(
+                status=MatchStatus.AMBIGUOUS, result=None,
+                reason="L1 确认或选择动作缺少明确业务对象，先结合历史改写；不能凭酒店等方案明细分类",
+            )
         found: dict[IntentCategory, str] = {}
         action_clauses: list[tuple[str, _Rule | None, str]] = []
+        clause_hits: list[tuple[str, _Rule, str, str | None]] = []
         greeting = False
-        for clause in _CLAUSE_SPLITTER.split(text):
+        for index, clause in enumerate(_CLAUSE_SPLITTER.split(text)):
             clause = clause.strip()
             hit = _first_match(clause)
             action = _ACTION_PATTERN.search(clause)
+            if index == 0 and hit is None and action is not None and action.lastgroup != "query":
+                # “修改一下，我的出差申请”把动作和对象分开了；同一规则可跨逗号绑定。
+                full_hit = _first_match(text)
+                if full_hit is not None:
+                    span = full_hit[0].keyword.search(text)
+                    if span.start() <= action.start() < span.end():
+                        hit = full_hit
             prefix = clause[max(0, action.start() - 3):action.start()] if action else ""
             if (
                 action is not None
@@ -230,12 +279,22 @@ class IntentRuleMatcher:
             if hit is None:
                 continue
             rule, _ = hit
+            clause_hits.append((clause, rule, hit[1], action.lastgroup if action else None))
             if rule.category is IntentCategory.GREETING:
                 greeting = True
             else:
                 found.setdefault(rule.category, clause.strip())
-        if greeting and not found:
+        if greeting and not found and re.fullmatch(_GREETING_PATTERN, text, re.IGNORECASE):
             found[IntentCategory.GREETING] = text
+
+        if any(rule is None and kind in {"apply", "select", "plan"} for _, rule, kind in action_clauses):
+            return FastMatch(status=MatchStatus.AMBIGUOUS, result=None,
+                             reason="L1 明确动作未能归类，不用背景名词代替动作；跳过 L2")
+        if any(rule is not None and kind in {"apply", "select", "plan"} for _, rule, kind in action_clauses):
+            # 日期、交通和住宿明细是该事项的参数，独立的查询动作仍参与多意图判断。
+            background = {IntentCategory.FLIGHT_SEARCH, IntentCategory.TRAIN_SEARCH, IntentCategory.HOTEL_SEARCH}
+            found = {rule.category: phrase for clause, rule, phrase, action_kind in clause_hits
+                     if action_kind is not None or rule.category not in background or _QUESTION_PATTERN.search(clause)}
 
         # L1 不能给未归类的独立动作强行补单标签；同职责组且均已归类仍可快路由。
         if (
@@ -276,10 +335,9 @@ class IntentRuleMatcher:
                 reason="L1 不同职责组的子句同时命中，跳过单意图向量层",
             )
 
-        hit = _first_match(text)
-        if hit is None:
-            return FastMatch(status=MatchStatus.MISS, result=None, reason="L1 全句排除词使规则弃权")
-        rule, phrase = hit
+        # 沿用已有类别优先级，但不再用全句名词覆盖子句中已裁定的动作。
+        rule = next(rule for rule in _RULES if rule.category in found)
+        phrase = found[rule.category]
         reason = (
             ("L1 排除否定动作后，" if negated else "L1 ")
             + f"规则命中 {rule.category.value}，匹配片段「{phrase}」"

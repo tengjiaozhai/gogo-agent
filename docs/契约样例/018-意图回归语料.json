@@ -129,6 +129,44 @@
       "history": [],
       "before": "L3 travel_order_query → itinerary_planning，原本正确",
       "expected": {"branch": "rewritten", "layer": "llm", "intents": ["travel_order_query", "itinerary_planning"]}
+    },
+    {
+      "id": "confirm_application_with_hotel_details",
+      "source": "2026-10-23 真实会话：确认提交被历史补入的酒店H2误判为酒店搜索",
+      "question": "确认提交",
+      "history": [
+        {"role": "user", "content": "为客户拜访规划北京到上海2026-11-10至2026-11-12的行程，并准备提交差旅申请。"},
+        {"role": "agent", "content": "综合最佳方案为去程F12、酒店H2两晚和返程F2；差旅申请尚未提交。"}
+      ],
+      "before": "改写为确认提交综合最佳方案（含酒店H2），L1 hotel_search，GoGo工具列表为空",
+      "expected": {
+        "branch": "rewritten", "layer": "rule", "intents": ["travel_application"],
+        "rewrite_contains": ["提交", "差旅申请", "北京", "上海"],
+        "rewrite_excludes": ["预订酒店", "下单"]
+      }
+    },
+    {
+      "id": "select_plan_without_submission",
+      "source": "确认提交修复的非写入对照：选择方案不等于申请或预订",
+      "question": "选择综合最佳方案",
+      "history": [
+        {"role": "user", "content": "规划北京到上海2026-11-10至2026-11-12的行程，只比较方案，不提交申请也不预订。"},
+        {"role": "agent", "content": "可选综合最佳或价格最低行程方案，都含酒店H2两晚，请选择方案。"}
+      ],
+      "before": "改写补入酒店名词后，L1 hotel_search，选择动作丢失",
+      "expected": {
+        "branch": "rewritten", "layer": "rule", "intents": ["itinerary_planning"],
+        "rewrite_contains": ["选择", "行程", "方案"],
+        "rewrite_excludes": ["提交", "申请", "预订", "下单"]
+      }
+    },
+    {
+      "id": "confirmation_without_history",
+      "source": "裸确认缺少上下文时，不让向量近邻代替提交对象",
+      "question": "确认提交",
+      "history": [],
+      "before": "尝试L2或模型猜测对象，可能进入错误业务类别",
+      "expected": {"branch": "needs_context", "layer": null, "intents": []}
     }
   ]
 }

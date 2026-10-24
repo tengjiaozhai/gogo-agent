@@ -176,7 +176,7 @@ async def test_two_sse_streams_keep_user_session_and_trace_separate(test_users, 
 
 @pytest.mark.asyncio
 async def test_sse_early_close_restores_trace_and_closes_agent_model(test_users, monkeypatch, caplog):
-    """只消费首个分块就关闭流，也必须在追踪作用域内释放 Agent 模型。"""
+    """只消费首个执行进度就关闭流，也必须在追踪作用域内释放 Agent 模型。"""
     executor = test_users["executor"]
     close_traces: list[str | None] = []
     original_close = executor._close_agent_model
@@ -189,7 +189,7 @@ async def test_sse_early_close_restores_trace_and_closes_agent_model(test_users,
     with caplog.at_level(logging.INFO, logger="gogo_agent.chat.executor"):
         stream = await executor.stream_turn_sse("session-022-close", "u001", "查差旅政策")
         first = await stream.__anext__()
-        assert first.startswith("event: message\n")
+        assert first.startswith("event: progress\n")
         assert current_trace_id() is None
         await stream.aclose()
 

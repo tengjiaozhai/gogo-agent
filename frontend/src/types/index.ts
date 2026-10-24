@@ -24,6 +24,9 @@ export interface Message {
   content: string;
   agentName?: string;
   timestamp: number;
+  /** 本轮回复仅在收到后端 message_id 后完成；失败内容不能作为确认依据。 */
+  replyStatus?: 'streaming' | 'completed' | 'failed';
+  replyError?: string;
   /** 快照的该轮进度树，用于历史对话中持久展示 */
   progress?: PlanProgress;
   /** 快照的该轮思考过程（每个 Agent 有多轮） */

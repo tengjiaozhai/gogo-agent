@@ -134,7 +134,6 @@ export default function ChatWindow({ onOpenSidebar }: { onOpenSidebar: () => voi
   const bottomRef = useRef<HTMLDivElement>(null);
   const activeRequest = useRef<AbortController | null>(null);
 
-  useEffect(() => () => activeRequest.current?.abort(), []);
 
   const username = useAuthStore((s) => s.username) ?? '我';
   const clearAuth = useAuthStore((state) => state.clearAuth);
@@ -149,7 +148,9 @@ export default function ChatWindow({ onOpenSidebar }: { onOpenSidebar: () => voi
     conversations,
     currentConversationId,
     addMessage,
-    appendToLastAgentMessage,
+    appendAgentReply,
+    completeAgentReply,
+    failAgentReply,
     addProgressStep,
     updatePlanTasks,
     addTravelData,
@@ -168,8 +169,10 @@ export default function ChatWindow({ onOpenSidebar }: { onOpenSidebar: () => voi
     appendTimelineThinking,
     setTimelinePlan,
     setMessageFeedback,
-    setLastAgentMessageId,
   } = useChatStore();
+
+  // 离开会话时中止旧流；终态更新使用发起时的会话和回复 ID。
+  useEffect(() => () => activeRequest.current?.abort(), [currentConversationId]);
 
   const currentConv = conversations.find((c) => c.id === currentConversationId);
   const messages = currentConv?.messages ?? emptyMessages;
@@ -179,7 +182,7 @@ export default function ChatWindow({ onOpenSidebar }: { onOpenSidebar: () => voi
 
   const lastMsg = messages.length > 0 ? messages[messages.length - 1] : null;
   const lastAgentIsStreaming =
-    isThinking && lastMsg?.role === 'agent' && !lastMsg.timeline;
+    isThinking && lastMsg?.role === 'agent' && lastMsg.replyStatus === 'streaming';
 
   // 从后端加载远程会话的历史消息
   useEffect(() => {
@@ -197,6 +200,7 @@ export default function ChatWindow({ onOpenSidebar }: { onOpenSidebar: () => voi
           feedback: m.feedback ?? null,
           feedbackAt: m.feedbackAt ?? undefined,
           timeline: m.extra?.timeline,
+          replyStatus: m.role === 'agent' ? 'completed' : undefined,
         }));
         loadConversationMessages(currentConversationId, messages);
       })
@@ -233,17 +237,17 @@ export default function ChatWindow({ onOpenSidebar }: { onOpenSidebar: () => voi
     ta.style.height = Math.min(ta.scrollHeight, 140) + 'px';
   }, [inputText]);
 
-  const handleEvent = (event: string, data: string) => {
+  const handleEvent = (event: string, data: string, sessionId: string, replyId: string) => {
     switch (event) {
       case 'agent-switch':
         setActiveAgent(data);
         break;
       case 'message':
-        appendToLastAgentMessage(data);
+        appendAgentReply(sessionId, replyId, data);
         break;
       case 'message_id':
         // 后端回复落库后下发的真实 messageId，回填后点赞/点踩才能命中数据库记录
-        setLastAgentMessageId(data.trim());
+        completeAgentReply(sessionId, replyId, data.trim());
         break;
       case 'thinking': {
         try {
@@ -352,8 +356,8 @@ export default function ChatWindow({ onOpenSidebar }: { onOpenSidebar: () => voi
         break;
       }
       case 'error':
-        snapshotProgressToLastMessage();
-        clearProgress();
+        failAgentReply(sessionId, replyId, data);
+        clearSuggestedQuestions();
         addMessage({
           id: Math.random().toString(36).slice(2, 10),
           role: 'system',
@@ -371,7 +375,7 @@ export default function ChatWindow({ onOpenSidebar }: { onOpenSidebar: () => voi
         break;
       }
       case 'interrupted':
-        setThinking(false);
+        failAgentReply(sessionId, replyId, '回复已中断，未收到保存确认');
         clearSuggestedQuestions();
         addMessage({
           id: Math.random().toString(36).slice(2, 10),
@@ -465,9 +469,14 @@ export default function ChatWindow({ onOpenSidebar }: { onOpenSidebar: () => voi
     if (!content.trim() || isThinking) return;
     const requestToken = useAuthStore.getState().token;
     const requestSessionId = currentConversationId;
+    const replyId = Math.random().toString(36).slice(2, 10);
+    activeRequest.current?.abort();
     const controller = new AbortController();
     activeRequest.current = controller;
+    let committed = false;
+    let failed = false;
     const isCurrentRequest = () =>
+      activeRequest.current === controller &&
       useAuthStore.getState().token === requestToken &&
       useChatStore.getState().currentConversationId === requestSessionId;
 
@@ -485,12 +494,28 @@ export default function ChatWindow({ onOpenSidebar }: { onOpenSidebar: () => voi
       content,
       timestamp: Date.now(),
     });
+    addMessage({ id: replyId, role: 'agent', content: '', agentName: 'GoGo',
+      timestamp: Date.now(), replyStatus: 'streaming' });
     setThinking(true);
     const onEvt = (evt: { event: string; data: string }) => {
-      if (isCurrentRequest()) handleEvent(evt.event, evt.data);
+      if (!isCurrentRequest() || failed) return;
+      if (evt.event === 'message_id') committed = isPersistedMessageId(evt.data.trim());
+      if (evt.event === 'suggestions' && !committed) return;
+      if (evt.event === 'error' || evt.event === 'interrupted') {
+        // 保存确认后的辅助流错误不使已保存的回复失效。
+        if (committed) return;
+        failed = true;
+      }
+      handleEvent(evt.event, evt.data, requestSessionId, replyId);
     };
     const onErr = (err: Error) => {
-      if (!isCurrentRequest()) return;
+      if (!isCurrentRequest() || committed || failed) return;
+      failed = true;
+      if (controller.signal.aborted) {
+        failAgentReply(requestSessionId, replyId, '回复已中断，未收到保存确认');
+        return;
+      }
+      failAgentReply(requestSessionId, replyId, errorText(err, '聊天连接中断'));
       if (err.message === 'UNAUTHORIZED') {
         setThinking(false);
         handleUnauthorized();
@@ -499,14 +524,22 @@ export default function ChatWindow({ onOpenSidebar }: { onOpenSidebar: () => voi
       addMessage(systemMessage(`连接异常：${errorText(err, '未知错误')}`));
     };
     const onDone = () => {
-      if (isCurrentRequest()) setThinking(false);
+      if (!committed && !failed) {
+        failed = true;
+        failAgentReply(requestSessionId, replyId, '连接已结束，但未收到回复保存确认');
+      }
     };
 
     try {
       await sendChatMessageSSE(requestSessionId, content, onEvt, onErr, onDone, controller.signal);
     } catch (err: unknown) {
       if (!isCurrentRequest()) return;
-      setThinking(false);
+      if (!committed && !failed) {
+        failed = true;
+        failAgentReply(requestSessionId, replyId, controller.signal.aborted
+          ? '回复已中断，未收到保存确认' : errorText(err, '发送失败'));
+      }
+      if (controller.signal.aborted) return;
       if (errorText(err, '') === 'UNAUTHORIZED') {
         // Token 已失效，自动登出（clearAuth 会触发 App 渲染登录页）
         handleUnauthorized();
@@ -514,6 +547,9 @@ export default function ChatWindow({ onOpenSidebar }: { onOpenSidebar: () => voi
       }
       addMessage(systemMessage(`发送失败：${errorText(err, '请检查后端服务是否启动')}`));
     } finally {
+      if (!committed && !failed) {
+        failAgentReply(requestSessionId, replyId, '回复已中断，未收到保存确认');
+      }
       if (activeRequest.current === controller) activeRequest.current = null;
     }
   };
