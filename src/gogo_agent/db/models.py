@@ -4,6 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 from sqlalchemy import BigInteger, DateTime, Index, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy.dialects.mysql import MEDIUMTEXT
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base
@@ -73,7 +74,10 @@ class AgentScopeSessionModel(Base):
     session_id: Mapped[str] = mapped_column(String(255), primary_key=True, comment="会话唯一标识符")
     state_key: Mapped[str] = mapped_column(String(255), primary_key=True, default="agent_state", comment="状态键名 (如 agent_state)")
     item_index: Mapped[int] = mapped_column(Integer, primary_key=True, default=0, comment="多分块状态索引项")
-    state_data: Mapped[str] = mapped_column(Text, nullable=False, comment="AgentState 序列化 JSON 文本")
+    state_data: Mapped[str] = mapped_column(
+        Text().with_variant(MEDIUMTEXT(), "mysql", "mariadb"),
+        nullable=False, comment="AgentState 序列化 JSON 文本",
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, comment="状态创建时间")
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False, comment="状态最近更新时间")
 

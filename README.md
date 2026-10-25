@@ -48,6 +48,25 @@ uv run --locked pytest -q tests/test_001.py
 
 测试覆盖纯日期函数、配置错误、健康检查，以及用本地模拟 `/v1/chat/completions` 完成一次工具调用和模型回答；无需真实模型密钥。
 
+## AgentState 存储列扩容
+
+MySQL/MariaDB 的 `agentscope_session.state_data` 使用 `MEDIUMTEXT`，容量为 16,777,215 字节；SQLite 继续使用 `TEXT`。已有库的 `TEXT` 列不会因更新 ORM 或重启而自动扩容，请从仓库根目录显式迁移：
+
+```sh
+PYTHONPATH=src .venv/bin/python scripts/migrate_agent_state_mediumtext.py
+PYTHONPATH=src .venv/bin/python scripts/migrate_agent_state_mediumtext.py --apply
+```
+
+脚本与 API 共用 `GOGO_DATABASE_URL`（进程环境变量优先，否则加载 `.env`）。第一条只读预检；第二条只把该列从 `TEXT` 扩为 `MEDIUMTEXT`，保留字符集、排序规则、非空约束、默认值与注释，不修改状态内容。已迁移时重复执行不再发出 DDL；其他列类型显式失败。迁移保留历史状态，但不会补回此前保存失败的回复，需要重新发送对应请求。
+
+容量回归使用空的、可丢弃的 MySQL/MariaDB 测试库，通过 `GOGO_TEST_MYSQL_URL` 显式指定；用例会创建并清理三张测试表，不读取 `.env` 的业务库连接。`TEST_DATABASE_URL` 由运行者设置为该测试库连接串：
+
+```sh
+GOGO_TEST_MYSQL_URL="$TEST_DATABASE_URL" PYTHONPATH=src .venv/bin/python -m pytest -q tests/test_agent_state_storage.py
+```
+
+回归覆盖超过 64 KiB 的状态完整读回、继续累加、旧表扩容与幂等，以及固定模型的真实 AgentScope JSON/SSE 保存确认；不调用真实模型或供应商。未指定测试库时，数据库用例跳过，只运行 DDL 与错误输入检查。
+
 068–085 的提示词版本、可信时间、无损输入压缩、有限修订、候选引用与显式长期偏好，见[阶段 G 调试指南](docs/契约样例/阶段G-068-085-调试指南.md)。离线运行：
 
 ```bash

@@ -226,12 +226,14 @@
 - [`docs/契约样例/阶段D-029-041-调试指南.md`](docs/契约样例/阶段D-029-041-调试指南.md) — 提供阶段 D 的 Java/Python 对照、可复制命令、逐断点验收、预测练习与限制。
 - [`docs/契约样例/阶段D-前端与Scalar逐步调试.md`](docs/契约样例/阶段D-前端与Scalar逐步调试.md) — 指导用本地浏览器练习库、React 聊天页、Scalar、PyCharm 断点逐项学习 029–041。
 - [`docs/契约样例/阶段F-061-067-调试指南.md`](docs/契约样例/阶段F-061-067-调试指南.md) — 提供预订门禁、唯一下单、未知结果对账、取消、只读重试、并行搜索与熔断的 Java/Python 对照、断点、练习与未验证边界。
+- [`docs/契约样例/阶段F-预订Agent逐步调试.md`](docs/契约样例/阶段F-预订Agent逐步调试.md) — 引导从隔离脚本逐步观察预订门禁、同键重复、未知结果和取消，并对照 Agent 工具、前端接线及 Java/Python 责任边界。
 - [`docs/契约样例/048-旅行Skill与MCP清单.md`](docs/契约样例/048-旅行Skill与MCP清单.md) — 核对 Java 旅行 Skill 与 MCP 的启用状态、凭证与写权限，并给出 Python 迁移去向。
 - [`docs/契约样例/阶段E-046-049-058-调试指南.md`](docs/契约样例/阶段E-046-049-058-调试指南.md) — 提供外部能力的 Java/Python 对照、零准备运行、断点、预测练习、已知缺陷与未验证边界。
 - [`docs/契约样例/055-第三方鉴权授权图.md`](docs/契约样例/055-第三方鉴权授权图.md) — 用“用户、服务、供应商”授权图和集成清单说明各凭证的持有者、资源、更新与撤销方式。
 - [`docs/契约样例/阶段E-050-059-调试指南.md`](docs/契约样例/阶段E-050-059-调试指南.md) — 提供凭证与鉴权练习的 Java/Python 对照、零准备运行、断点、预测练习与未验证边界。
 - [`docs/契约样例/阶段E-042-060-调试指南.md`](docs/契约样例/阶段E-042-060-调试指南.md) — 提供阶段 E 规划核心的 Java/Python 对照、零准备运行、逐断点验收、预测练习与未验证边界。
 - [`docs/契约样例/阶段E-前端触发规划Agent逐步调试.md`](docs/契约样例/阶段E-前端触发规划Agent逐步调试.md) — 指导用练习库、React 聊天页、Scalar、断点和日志逐步调试 042–060 的规划 Agent 触发链路。
+- [`docs/契约样例/阶段E-审核智能体逐步调试.md`](docs/契约样例/阶段E-审核智能体逐步调试.md) — 指导从规划工具进入审核，逐步观察客观六维、三个主观评估、仲裁、版本有效性和存储证据。
 - [`docs/契约样例/执行过程时间轴-调试指南.md`](docs/契约样例/执行过程时间轴-调试指南.md) — 说明 Java 组件复用、Python 事件协议、离线浏览器运行、逐断点观察和回放边界。
 
 - [`docs/契约样例/阶段G-068-085-调试指南.md`](docs/契约样例/阶段G-068-085-调试指南.md) — 提供提示词、上下文、修订上限、候选引用和长期偏好的 Java/Python 对照、离线逐步调试与验收边界。
@@ -293,6 +295,7 @@
 - [`scripts/demo_confirmation_routing.py`](scripts/demo_confirmation_routing.py) — 用固定模型、真实主子 Agent 和隔离 SQLite 演示确认路由、委派重试、两轮提交与幂等。
 - [`scripts/init_stage_d_test_db.py`](scripts/init_stage_d_test_db.py) — 仅在隔离 SQLite 中创建阶段 D 业务表并展示建表前后结果。
 - [`scripts/migrate_stage_d_tables.py`](scripts/migrate_stage_d_tables.py) — 预检并显式创建 `.env` MySQL 中缺失的阶段 D 项目表，核验项目字段注释与关键唯一约束。
+- [`scripts/migrate_agent_state_mediumtext.py`](scripts/migrate_agent_state_mediumtext.py) — 预检并显式扩容 MySQL/MariaDB 的 AgentState 存储列，保留既有列属性并验证迁移结果。
 - [`scripts/prepare_stage_d_browser_lab.py`](scripts/prepare_stage_d_browser_lab.py) — 创建不接触 `.env` 数据库的临时 SQLite、测试账号职级与模拟预订，供浏览器调试。
 - [`scripts/prepare_stage_e_browser_lab.py`](scripts/prepare_stage_e_browser_lab.py) — 创建含用户级途牛 Key 表的阶段 E 练习库、3 个账号、假途牛命令与保密变量文件，供前端触发规划 Agent 调试。
 - [`scripts/demo_029_040_stage_d.py`](scripts/demo_029_040_stage_d.py) — 用离线模型、真实管理 Toolkit 与隔离数据库逐项演示 029–040 分支。
@@ -306,7 +309,7 @@
 - [`scripts/fake_tuniu_cli.py`](scripts/fake_tuniu_cli.py) — 纯标准库模拟途牛 CLI，可按环境变量返回成功、失败、非 JSON、挂起、超大输出，或把样例日期改为请求日期（`FAKE_TUNIU_ECHO_DATES=1`）。
 - [`scripts/fake_weather_mcp_server.py`](scripts/fake_weather_mcp_server.py) — 用 FastMCP 提供 stdio 天气 forecast 工具，可按环境变量模拟工具错误、坏响应、崩溃与挂起。
 
-- [`scripts/demo_068_085_context.py`](scripts/demo_068_085_context.py) — 用真实 SDK、隔离计划与偏好存储演示路由、稳定前缀、无损输入压缩、有限修订和候选引用。
+- [`scripts/demo_068_085_context.py`](scripts/demo_068_085_context.py) — 用真实 SDK、隔离计划与偏好存储演示路由、稳定前缀、无损输入压缩、有限修订和候选引用，并用 `qa` 对照旧/新提示词的问答级首轮表现（默认 dry-run）。
 
 ## output
 
@@ -323,6 +326,7 @@
 - [`tests/test_execution_trace.py`](tests/test_execution_trace.py) — 验证真实主子事件、SQLite 回放与权限、脱敏、等待/失败状态、背压和断连清理。
 - [`tests/test_confirmation_routing.py`](tests/test_confirmation_routing.py) — 验证确认与选择的上下文、动作保真及 HTTP JSON/SSE 管理委派、两轮提交和令牌边界。
 - [`tests/test_delegation_retry.py`](tests/test_delegation_retry.py) — 验证显式委派重试、原参数复用、令牌状态保存及未恢复失败的 JSON/SSE 出口。
+- [`tests/test_agent_state_storage.py`](tests/test_agent_state_storage.py) — 验证 AgentState 方言类型、旧表扩容与幂等，以及隔离 MySQL/MariaDB 中超过 64 KiB 状态的读回和 JSON/SSE 保存。
 - [`tests/test_068_085_context.py`](tests/test_068_085_context.py) — 验证真实 SDK 输入转换、结构化失败、两轮修订、候选隔离过期及显式偏好的认证和撤回。
 - [`tests/test_001.py`](tests/test_001.py) — 验证 001 配置、日期工具、HTTP 健康检查及模拟模型网关调用链。
 - [`tests/test_004_auth.py`](tests/test_004_auth.py) — 验证 004 登录、登出、用户信息隔离、401 拦截与密码哈希自动迁移。
