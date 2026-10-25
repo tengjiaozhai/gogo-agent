@@ -47,3 +47,11 @@ uv run --locked pytest -q tests/test_001.py
 ```
 
 测试覆盖纯日期函数、配置错误、健康检查，以及用本地模拟 `/v1/chat/completions` 完成一次工具调用和模型回答；无需真实模型密钥。
+
+068–085 的提示词版本、可信时间、无损输入压缩、有限修订、候选引用与显式长期偏好，见[阶段 G 调试指南](docs/契约样例/阶段G-068-085-调试指南.md)。离线运行：
+
+```bash
+PYTHONPATH=src .venv/bin/python scripts/demo_068_085_context.py --case all
+```
+
+长期偏好在已认证的 `/api/preferences` 接口保存/更新/删除，默认持久化到本机 `~/.gogo-agent/preferences.sqlite3`；可用 `GOGO_PREFERENCE_DB` 指定文件。撤回后后续模型调用不再自动注入该值。此入口尚未接入前端页面。

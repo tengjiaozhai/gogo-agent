@@ -78,6 +78,8 @@ def _summary(plan: PlanView) -> dict[str, Any]:
         "terminated": plan.progress.terminated,
         "termination_reason": plan.progress.termination_reason,
         "review_current": plan.review_is_current(),
+        "repair_attempts": plan.repair_attempts,
+        "candidates_expires_at": plan.candidates_expires_at.isoformat() if plan.candidates_expires_at else None,
     }
     if plan.candidates is not None:
         data["candidate_source"] = plan.candidates.source
@@ -204,6 +206,13 @@ def build_plan_toolkit(
             return _plan_failure(exc)
         return _ok(_summary(plan), "方案已计算")
 
+    def get_candidates(plan_id: str, offset: int = 0, limit: int = 20) -> str:
+        """分页读取本人计划的完整候选字段；最多五十条，二十四小时后过期需重新搜索。"""
+        try:
+            return _ok(service.get_candidates(user_id, plan_id, offset=offset, limit=limit))
+        except PlanError as exc:
+            return _plan_failure(exc)
+
     def get_plan(plan_id: str) -> str:
         """读取本人计划的当前状态、版本和方案摘要。"""
         try:
@@ -223,14 +232,15 @@ def build_plan_toolkit(
         return _ok({
             "review_id": final.review_id, "plan_version": final.plan_version,
             "verdict": final.verdict.value, "needs_rework": final.needs_rework,
+            "repair_attempts": service.get(user_id, plan_id).repair_attempts,
             "blocking_issues": blocking,
             "warnings": [issue.evidence for issue in final.objective.issues if issue.severity == ReviewVerdict.WARNING],
             "next_step": PlanStepName.AWAIT_CONFIRMATION.value if not final.needs_rework else PlanStepName.COMPUTE_PROPOSALS.value,
         }, "审核完成")
 
     allowed = PermissionDecision(behavior=PermissionBehavior.ALLOW, message="允许受控行程规划与只读审核")
-    read_only = {get_plan}
-    functions = (create_plan, search_candidates, compute_plan, get_plan, review_plan)
+    read_only = {get_plan, get_candidates}
+    functions = (create_plan, search_candidates, compute_plan, get_plan, get_candidates, review_plan)
     return Toolkit(tools=[
         FunctionTool(function, name=function.__name__, is_read_only=function in read_only,
                      is_concurrency_safe=False, permission=allowed)

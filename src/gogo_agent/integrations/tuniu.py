@@ -267,6 +267,7 @@ def normalize_hotels(items: Any, nights: int) -> list[HotelCandidate]:
         meal = _str(item, "meal")
         candidates.append(HotelCandidate(
             id=f"H{len(candidates) + 1}",
+            supplier_id=_str(item, "hotelId"),
             name=name,
             brand=_str(item, "brandName"),
             star_rating=_star_rating(_str(item, "starName")),

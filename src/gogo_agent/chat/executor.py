@@ -11,7 +11,8 @@ from agentscope.agent import Agent, ModelConfig, ReActConfig
 from agentscope.credential import OpenAICredential
 from agentscope.event import ReplyFinishedReason, TextBlockDeltaEvent
 from agentscope.message import Msg, TextBlock, UserMsg
-from agentscope.model import ChatResponse, OpenAIChatModel
+from agentscope.model import ChatModelBase, ChatResponse, OpenAIChatModel
+from agentscope.middleware import MiddlewareBase
 from agentscope.permission import PermissionBehavior, PermissionDecision
 from agentscope.state import AgentState
 from agentscope.tool import FunctionTool, Toolkit
@@ -22,6 +23,8 @@ from gogo_agent.intent.models import IntentCategory, QueryInput
 from gogo_agent.intent.pipeline import IntentPipelineService, PreparedIntentTurn
 from gogo_agent.intent.runtime import open_intent_pipeline
 from gogo_agent.model import create_chat_model
+from gogo_agent.context.input import ModelInputContext
+from gogo_agent.context.preferences import get_preference_store
 from gogo_agent.request_context import RequestContext, current_trace_id, trace_scope
 from gogo_agent.travel.dependencies import get_travel_service
 from gogo_agent.travel.tools import build_manage_toolkit
@@ -142,7 +145,7 @@ class ChatAgentExecutor:
     def session_store(self) -> AgentSessionStoreProtocol:
         return self._session_store
 
-    def _build_model(self, stream: bool = False, *, role: str = "master"):
+    def _build_model(self, stream: bool = False, *, role: str = "master") -> ChatModelBase:
         """正式模型按角色选主/稳定模型；离线测试显式注入替身。"""
         settings = require_model_configuration()
         if role not in ("master", "info", "manage", "recommendation", "plan", "review"):
@@ -206,6 +209,14 @@ class ChatAgentExecutor:
             if isawaitable(closed):
                 await closed
 
+    def _input_middlewares(self, request: RequestContext, trace: ExecutionTrace | None) -> list[MiddlewareBase]:
+        """每轮只召回本人有效偏好；闭包不保留跨用户缓存或被撤回的旧值。"""
+        context = ModelInputContext(request, preferences=lambda: [
+            {"key": item.key, "value": item.value, "source_message": item.source_message}
+            for item in get_preference_store().list(request.user_id)
+        ])
+        return [context, trace] if trace is not None else [context]
+
     def _build_info_agent(self, request: RequestContext, state: AgentState | None = None, *, trace: ExecutionTrace | None = None) -> Agent:
         """为同一认证用户恢复只读 InfoAgent 状态，保留独立会话记忆。"""
         state_session_id = self._state_session_id(request.session_id, request.user_id)
@@ -215,7 +226,7 @@ class ChatAgentExecutor:
             name=self.INFO_AGENT_NAME,
             system_prompt=INFO_SYSTEM_PROMPT,
             model=self._build_model(stream=False, role="info"),
-            middlewares=[trace] if trace is not None else None,
+            middlewares=self._input_middlewares(request, trace),
             state=state or AgentState(session_id=state_session_id),
             react_config=ReActConfig(
                 max_iters=self._settings.info_max_iters,
@@ -233,7 +244,7 @@ class ChatAgentExecutor:
             name=self.MANAGE_AGENT_NAME,
             system_prompt=MANAGE_SYSTEM_PROMPT,
             model=self._build_model(stream=False, role="manage"),
-            middlewares=[trace] if trace is not None else None,
+            middlewares=self._input_middlewares(request, trace),
             toolkit=build_manage_toolkit(get_travel_service(), request),
             state=state or AgentState(session_id=state_session_id),
             react_config=ReActConfig(
@@ -262,7 +273,7 @@ class ChatAgentExecutor:
         agent = build_plan_agent(
             model=self._build_model(stream=False, role="plan"), toolkit=toolkit,
             state=state or AgentState(session_id=state_session_id),
-            middlewares=[trace] if trace is not None else None,
+            middlewares=self._input_middlewares(request, trace),
         )
         return agent, review_model
 
@@ -407,7 +418,7 @@ class ChatAgentExecutor:
         toolkit = Toolkit(tools=tools) if tools else None
         return Agent(
             name=self.COORDINATOR_AGENT_NAME,
-            middlewares=[trace] if trace is not None else None,
+            middlewares=self._input_middlewares(request, trace),
             system_prompt=master_system_prompt(
                 intents, info_tool_enabled=has_info, manage_tool_enabled=has_manage,
                 plan_tool_enabled=has_plan,

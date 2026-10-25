@@ -55,6 +55,7 @@ class HotelCandidate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str = Field(..., min_length=1, description="候选编号，如 H1")
+    supplier_id: str | None = Field(default=None, description="供应商原始酒店标识；内部候选重新编号时不得覆盖")
     name: str = Field(..., min_length=1, description="酒店名称")
     brand: str | None = Field(default=None, description="酒店品牌")
     star_rating: int | None = Field(default=None, ge=0, le=5, description="星级，0–5")
@@ -348,6 +349,9 @@ class PlanView(BaseModel):
     candidates: CandidateSet | None = Field(default=None, description="当前候选；未搜索或已失效时为空")
     result: PlanResult | None = Field(default=None, description="当前方案结果；未计算或已失效时为空")
     last_review: FinalReview | None = Field(default=None, description="最近一次审核，绑定其计划版本")
+    review_history: list[FinalReview] = Field(default_factory=list, description="每轮审核证据，按执行顺序保存，不覆盖失败记录")
+    repair_attempts: int = Field(default=0, ge=0, le=2, description="审核失败后真实重新计算的次数，同一计划最多两轮")
+    candidates_expires_at: datetime | None = Field(default=None, description="完整搜索候选的 UTC 过期时间，搜索成功后保留二十四小时")
     created_at: datetime = Field(..., description="创建 UTC 时间")
     updated_at: datetime = Field(..., description="最近更新 UTC 时间")
 

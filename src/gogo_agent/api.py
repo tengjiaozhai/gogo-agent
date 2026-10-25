@@ -10,6 +10,7 @@ from scalar_fastapi import add_scalar_reference
 from gogo_agent.auth.router import router as auth_router
 from gogo_agent.chat.config import load_chat_agent_settings, require_model_configuration
 from gogo_agent.chat.router import router as chat_router
+from gogo_agent.context.preferences import router as preference_router
 from gogo_agent.travel.router import admin_router, callback_router, travel_router
 from gogo_agent.travel.service import BusinessError
 
@@ -26,6 +27,7 @@ app = FastAPI(title="GoGo Agent", lifespan=lifespan)
 
 app.include_router(auth_router)
 app.include_router(chat_router)
+app.include_router(preference_router)
 app.include_router(travel_router)
 app.include_router(admin_router)
 app.include_router(callback_router)

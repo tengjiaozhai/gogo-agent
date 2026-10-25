@@ -71,7 +71,8 @@ async def test_rewrite_and_recognize_without_agent_or_tool_loop():
     assert len(model.calls) == 2  # 两个独立步骤各一次。
     for call in model.calls:
         assert call["tools"] is None and call["tool_choice"] is None
-        assert call["response_format"] == {"type": "json_object"}
+        assert call["response_format"]["type"] == "json_schema"
+        assert call["response_format"]["json_schema"]["schema"]["additionalProperties"] is False
         assert [message.role for message in call["messages"]] == ["system", "user"]
 
 
@@ -113,7 +114,10 @@ async def test_tomorrow_is_anchored_to_server_date_not_old_itinerary_date():
     with pytest.raises(ModelOutputError, match="服务端参考日期"):
         await QueryRewriter(model).rewrite(current)
     assert len(model.calls) == 1
-    assert "明天=2026-09-28" in model.calls[0]["messages"][0].get_text_content()
+    payload = json.loads(model.calls[0]["messages"][1].get_text_content())
+    assert payload["reference_date"] == "2026-09-27"
+    assert payload["date_anchors"]["tomorrow"] == "2026-09-28"
+    assert "2026-09-28" not in model.calls[0]["messages"][0].get_text_content()
 
 
 @pytest.mark.asyncio
@@ -185,7 +189,8 @@ async def test_real_sdk_request_shape_and_both_retry_layers(monkeypatch, http_st
         assert request["temperature"] == 0 and request["max_tokens"] == 8192
         assert "thinking" not in request
         assert "tools" not in request and "tool_choice" not in request
-        assert request["response_format"] == {"type": "json_object"}
+        assert request["response_format"]["type"] == "json_schema"
+        assert request["response_format"]["json_schema"]["name"] == "IntentResult"
         # 注入不合格客户端时也必须在网络调用前失败。
         model.client.max_retries = 1
         with pytest.raises(ValueError, match="SDK"):

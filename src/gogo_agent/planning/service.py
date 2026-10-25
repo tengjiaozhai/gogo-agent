@@ -59,7 +59,28 @@ class PlanService:
         plan = self.repository.get(user_id, plan_id)
         if plan is None:
             raise PlanError("PLAN_NOT_FOUND", "计划不存在或不属于当前用户", 404)
+        # 没有 TTL 的旧格式候选不继续使用；清理后必须重新搜索，避免新旧产物混用。
+        if ((plan.candidates is not None and plan.candidates_expires_at is None)
+                or (plan.candidates_expires_at is not None and self._clock() >= plan.candidates_expires_at)):
+            progress = steps.invalidate_from(plan.progress, PlanStepName.SEARCH_CANDIDATES)
+            plan = self._commit(user_id, plan, plan.model_copy(update={
+                "candidates": None, "result": None, "candidates_expires_at": None, "progress": progress,
+            }), content_changed=True)
         return plan
+
+    def get_candidates(self, user_id: str, plan_id: str, *, offset: int = 0, limit: int = 20) -> dict:
+        """凭本人计划引用分页回读候选，最多五十条；过期原始候选已经清理，必须重新搜索。"""
+        if type(offset) is not int or type(limit) is not int or offset < 0 or not 1 <= limit <= 50:
+            raise PlanError("INVALID_PAGE", "offset 必须是非负整数，limit 必须为 1–50 的整数", 422)
+        plan = self.get(user_id, plan_id)
+        if plan.candidates is None:
+            raise PlanError("NO_CANDIDATES", "候选不存在或已过期，请重新搜索")
+        candidates = plan.candidates
+        items = [c.model_dump(mode="json") for c in [*candidates.transports, *candidates.hotels]]
+        return {"plan_id": plan_id, "source": candidates.source,
+                "captured_at": candidates.captured_at.isoformat(), "currency": "CNY",
+                "expires_at": plan.candidates_expires_at.isoformat() if plan.candidates_expires_at else None,
+                "total": len(items), "offset": offset, "items": items[offset:offset + limit]}
 
     def create(self, user_id: str, conditions: PlanConditions, order_id: str | None = None) -> PlanView:
         """收集条件完成后创建计划，版本从 1 开始。"""
@@ -90,6 +111,7 @@ class PlanService:
         progress = steps.invalidate_from(plan.progress, PlanStepName.SEARCH_CANDIDATES)
         after = plan.model_copy(update={
             "conditions": conditions, "progress": progress, "candidates": None, "result": None,
+            "candidates_expires_at": None,
         })
         return self._commit(user_id, plan, after, content_changed=True)
 
@@ -98,7 +120,8 @@ class PlanService:
         plan = self.get(user_id, plan_id)
         progress = steps.complete(plan.progress, PlanStepName.SEARCH_CANDIDATES, data_version=plan.version)
         progress = steps.invalidate_from(progress, PlanStepName.COMPUTE_PROPOSALS)
-        after = plan.model_copy(update={"candidates": candidates, "progress": progress, "result": None})
+        after = plan.model_copy(update={"candidates": candidates, "progress": progress, "result": None,
+                                        "candidates_expires_at": self._clock() + timedelta(hours=24)})
         return self._commit(user_id, plan, after, content_changed=True)
 
     def record_search_failure(self, user_id: str, plan_id: str, error: str) -> PlanView:
@@ -116,6 +139,9 @@ class PlanService:
         plan = self.get(user_id, plan_id)
         if plan.candidates is None:
             raise PlanError("NO_CANDIDATES", "尚未搜索候选，不能计算方案")
+        repairing = plan.last_review is not None and plan.last_review.needs_rework
+        if repairing and plan.repair_attempts >= 2:
+            raise PlanError("REPAIR_LIMIT", "已完成两轮真实修订，仍未通过审核；请告知用户剩余问题并停止自动修订")
         try:
             result = compute_plan(
                 plan.candidates, origin=plan.conditions.origin, destination=plan.conditions.destination,
@@ -129,7 +155,8 @@ class PlanService:
             raise PlanError(exc.code, str(exc)) from None
         progress = steps.complete(plan.progress, PlanStepName.COMPUTE_PROPOSALS, data_version=plan.version)
         progress = steps.invalidate_from(progress, PlanStepName.REVIEW)
-        after = plan.model_copy(update={"result": result, "progress": progress})
+        after = plan.model_copy(update={"result": result, "progress": progress,
+                                        "repair_attempts": plan.repair_attempts + int(repairing)})
         return self._commit(user_id, plan, after, content_changed=True)
 
     async def review(
@@ -147,6 +174,7 @@ class PlanService:
         except ReviewError as exc:
             raise PlanError(exc.code, str(exc), exc.status) from None
         progress = steps.complete(plan.progress, PlanStepName.REVIEW, data_version=plan.content_version)
-        after = plan.model_copy(update={"progress": progress, "last_review": final})
+        after = plan.model_copy(update={"progress": progress, "last_review": final,
+                                        "review_history": [*plan.review_history, final]})
         self._commit(user_id, plan, after, content_changed=False)
         return final

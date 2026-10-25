@@ -14,6 +14,9 @@ from agentscope.message import SystemMsg, TextBlock, ToolCallBlock, UserMsg
 from agentscope.model import ChatModelBase, ChatResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from gogo_agent.model import structured_response_format
+from gogo_agent.context.input import PROMPT_VERSION
+
 from .models import ReviewIssue, ReviewResult, ReviewSource, ReviewVerdict
 from .review import Itinerary
 
@@ -92,13 +95,13 @@ class ModelSubjectiveAssessor:
 
     async def assess(self, itinerary: Itinerary) -> ReviewResult:
         messages = [
-            SystemMsg(name="system", content=PROMPTS[self.source]),
+            SystemMsg(name="system", content=f"[提示词版本 {PROMPT_VERSION}]\n" + PROMPTS[self.source]),
             UserMsg(name="user", content=json.dumps(_itinerary_view(itinerary), ensure_ascii=False)),
         ]
         async with asyncio.timeout(self._timeout_seconds):
             response = await self._model(
                 messages, tools=None, tool_choice=None,
-                response_format={"type": "json_object"}, max_tokens=MAX_OUTPUT_TOKENS,
+                response_format=structured_response_format(AssessmentOutput), max_tokens=MAX_OUTPUT_TOKENS,
             )
         text = _completed_text(response)
         output = AssessmentOutput.model_validate_json(text)

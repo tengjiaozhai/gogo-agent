@@ -12,7 +12,8 @@ from agentscope.message import SystemMsg, TextBlock, ToolCallBlock, UserMsg
 from agentscope.model import ChatModelBase, ChatResponse, OpenAIChatModel
 from pydantic import BaseModel, ValidationError
 
-from gogo_agent.model import create_chat_model
+from gogo_agent.model import create_chat_model, structured_response_format
+from gogo_agent.context.input import PROMPT_VERSION
 
 from .models import (
     FastMatch,
@@ -49,7 +50,8 @@ query 是本轮问题，history 是按时间排序的跨角色历史。判断本
 若上一轮用户请求“帮我处理这次出差”，助手正在等待时间、目的地和事由，而本轮只补“周五到周日去三亚参加展会”，改写必须继承“处理这次出差”这一笼统动作；不能只返回本轮要素，更不能补成“安排出差行程”或“规划行程”。仅在历史明确提供该动作时继承。
 “这次出差”不得扩成“这次出差安排”或“出差行程”；这两个名词会让下游误判为查询已有差旅单或规划方案。
 无需改写时直接在 rewritten_question 返回原问题，不生成额外解释或追加一次调用。
-使用 reference_date 和 timezone 解释相对日期，保留历史中已明确的绝对日期。
+对模糊或带假设的问题可在本次理解中先退一步梳理目标（Step-back）；最终 rewritten_question 必须保留用户给定的酒店品牌、城市、日期、预算和具体动作，不另发模型调用。
+使用服务端 date_anchors（today/tomorrow/day_after_tomorrow）、reference_date 和 timezone 解释相对日期，保留历史中已明确的绝对日期。
 旧行程的日期不是“明天”的计算基准；“明天”只等于服务端参考日期的次日，不能按旧出发日再加一天。
 无历史也能处理自包含问题；缺少必要指代信息时 rewritten_question 为 null，明确 missing_context。
 rewritten_question 非 null 时 missing_context 必须是空列表；missing_context 非空时 rewritten_question 必须是 null，绝不同时填写两者。
@@ -101,20 +103,25 @@ async def _generate(
     if client is not None and getattr(client, "max_retries", 0) != 0:
         raise ValueError("文本预处理模型的底层 SDK 必须设置 max_retries=0")
     schema = json.dumps(result_type.model_json_schema(), ensure_ascii=False)
+    payload_data = payload.model_dump(mode="json")
+    if isinstance(payload, RewriteContext):
+        payload_data["date_anchors"] = payload.date_anchors
     response = await model(
         [
-            SystemMsg(name="system", content=instructions + "\nJSON schema:\n" + schema),
-            UserMsg(name="user", content=payload.model_dump_json()),
+            SystemMsg(name="system", content=f"[提示词版本 {PROMPT_VERSION}]\n" + instructions + "\nJSON schema:\n" + schema),
+            UserMsg(name="user", content=json.dumps(payload_data, ensure_ascii=False)),
         ],
         tools=None,
         tool_choice=None,
-        response_format={"type": "json_object"},
+        response_format=structured_response_format(result_type),
         max_tokens=8192,
     )
     if not isinstance(response, ChatResponse) or not response.is_last:
         raise ModelOutputError(f"{result_type.__name__} 必须来自非流式最终响应")
     if response.finished_reason == "interrupted":
         raise asyncio.CancelledError
+    if str(response.finished_reason) != "completed":
+        raise ModelOutputError("文本预处理响应未正常完成")
     if any(isinstance(block, ToolCallBlock) for block in response.content):
         raise ModelOutputError("文本预处理不接受模型发起的工具调用")
     text = "".join(block.text for block in response.content if isinstance(block, TextBlock))
@@ -133,15 +140,7 @@ class QueryRewriter:
 
     async def rewrite(self, context: RewriteContext) -> RewriteResult:
         tomorrow = context.reference_date + timedelta(days=1)
-        day_after = context.reference_date + timedelta(days=2)
-        date_hint = (
-            f"\n服务端日期锚点（{context.timezone}）：今天={context.reference_date.isoformat()}，"
-            f"明天={tomorrow.isoformat()}，后天={day_after.isoformat()}。"
-            "本轮‘明天’必须使用此值，不能从历史行程日期推算。"
-        )
-        result = await _generate(
-            self._model, _REWRITE_INSTRUCTIONS + date_hint, context, RewriteResult
-        )
+        result = await _generate(self._model, _REWRITE_INSTRUCTIONS, context, RewriteResult)
         if "明天" in context.query.question and result.rewritten_question is not None:
             date_forms = (
                 tomorrow.isoformat(),

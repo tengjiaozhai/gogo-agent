@@ -14,3 +14,18 @@ def _isolate_plan_store() -> None:
     需要验证持久化路径的测试自己注入 session_factory，不受此开关影响。
     """
     os.environ.setdefault("GOGO_PLAN_STORE", "memory")
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _isolate_preferences(tmp_path_factory):
+    """长期偏好同样只写临时 SQLite，避免离线模型测试读取真实用户偏好。"""
+    from gogo_agent.context.preferences import get_preference_store
+    previous = os.environ.get("GOGO_PREFERENCE_DB")
+    os.environ["GOGO_PREFERENCE_DB"] = str(tmp_path_factory.mktemp("preferences") / "test.sqlite3")
+    get_preference_store.cache_clear()
+    yield
+    get_preference_store.cache_clear()
+    if previous is None:
+        os.environ.pop("GOGO_PREFERENCE_DB", None)
+    else:
+        os.environ["GOGO_PREFERENCE_DB"] = previous

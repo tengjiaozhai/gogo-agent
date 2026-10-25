@@ -77,7 +77,7 @@
 - [`src/gogo_agent/cli.py`](src/gogo_agent/cli.py) — 装配仅含日期工具的 Agent 并提供终端入口。
 - [`src/gogo_agent/tools.py`](src/gogo_agent/tools.py) — 提供不依赖模型的本地日期工具。
 - [`src/gogo_agent/api.py`](src/gogo_agent/api.py) — 提供唯一 FastAPI 入口、启动配置校验、认证、会话、差旅及审批路由和健康检查。
-- [`src/gogo_agent/model.py`](src/gogo_agent/model.py) — 为主/信息/意图调用统一创建 OpenAI 兼容模型并记录单次耗时与可用 token。
+- [`src/gogo_agent/model.py`](src/gogo_agent/model.py) — 统一创建 OpenAI 兼容模型、构造结构化输出格式并记录单次耗时与可用 token。
 - [`src/gogo_agent/request_context.py`](src/gogo_agent/request_context.py) — 定义服务端可信请求参数及只承载日志追踪号的异步任务作用域。
 
 ## src/gogo_agent/auth
@@ -93,7 +93,7 @@
 ## src/gogo_agent/chat
 
 - [`src/gogo_agent/chat/__init__.py`](src/gogo_agent/chat/__init__.py) — 导出会话消息服务、执行器与路由入口。
-- [`src/gogo_agent/chat/config.py`](src/gogo_agent/chat/config.py) — 集中主/信息/管理 Agent 提示词、轮次、模型与工具超时配置及启动校验。
+- [`src/gogo_agent/chat/config.py`](src/gogo_agent/chat/config.py) — 管理角色提示词、本轮路由说明、轮次、模型与工具超时配置及启动校验。
 - [`src/gogo_agent/chat/continuation.py`](src/gogo_agent/chat/continuation.py) — 用可信请求和精确续聊词恢复活跃 InfoAgent，处理过期与无效状态回退。
 - [`src/gogo_agent/chat/models.py`](src/gogo_agent/chat/models.py) — 定义会话、消息领域模型及请求响应视图 DTO。
 - [`src/gogo_agent/chat/repository.py`](src/gogo_agent/chat/repository.py) — 实现内存与 SQL 的业务历史、AgentState 与活跃路由存取，原子提交回复及状态，并处理已删除会话 ID 的重新归属。
@@ -104,6 +104,12 @@
 - [`src/gogo_agent/chat/recommendation.py`](src/gogo_agent/chat/recommendation.py) — 在主答复完成后解析并去重轻量模型生成的后续问题建议。
 - [`src/gogo_agent/chat/dependencies.py`](src/gogo_agent/chat/dependencies.py) — 提供会话仓储、L2 记忆库与执行器的 FastAPI 依赖注入。
 - [`src/gogo_agent/chat/router.py`](src/gogo_agent/chat/router.py) — 定义 /api/chat 的会话接口，并在 SSE 建立前完成对话预处理。
+
+## src/gogo_agent/context
+
+- [`src/gogo_agent/context/__init__.py`](src/gogo_agent/context/__init__.py) — 标记模型输入转换与长期偏好模块。
+- [`src/gogo_agent/context/input.py`](src/gogo_agent/context/input.py) — 为模型输入副本注入可信动态上下文、标记提示词版本并压缩重复只读回执。
+- [`src/gogo_agent/context/preferences.py`](src/gogo_agent/context/preferences.py) — 提供本人长期偏好的本机 SQL 存储、显式更新撤回与认证 HTTP 接口。
 
 ## src/gogo_agent/db
 
@@ -228,6 +234,9 @@
 - [`docs/契约样例/阶段E-前端触发规划Agent逐步调试.md`](docs/契约样例/阶段E-前端触发规划Agent逐步调试.md) — 指导用练习库、React 聊天页、Scalar、断点和日志逐步调试 042–060 的规划 Agent 触发链路。
 - [`docs/契约样例/执行过程时间轴-调试指南.md`](docs/契约样例/执行过程时间轴-调试指南.md) — 说明 Java 组件复用、Python 事件协议、离线浏览器运行、逐断点观察和回放边界。
 
+- [`docs/契约样例/阶段G-068-085-调试指南.md`](docs/契约样例/阶段G-068-085-调试指南.md) — 提供提示词、上下文、修订上限、候选引用和长期偏好的 Java/Python 对照、离线逐步调试与验收边界。
+- [`docs/契约样例/阶段G-固定回归.json`](docs/契约样例/阶段G-固定回归.json) — 保存八条问答期望、禁止行为和已识别意图到实际工具注册的固定边界样例。
+
 ## docs/架构
 
 - [`docs/架构/003-整体架构与HTTP入口.md`](docs/架构/003-整体架构与HTTP入口.md) — 记录 Java 请求链、Python 目标调用图、HTTP 入口取舍及 Java→Python 接口映射。
@@ -297,6 +306,8 @@
 - [`scripts/fake_tuniu_cli.py`](scripts/fake_tuniu_cli.py) — 纯标准库模拟途牛 CLI，可按环境变量返回成功、失败、非 JSON、挂起、超大输出，或把样例日期改为请求日期（`FAKE_TUNIU_ECHO_DATES=1`）。
 - [`scripts/fake_weather_mcp_server.py`](scripts/fake_weather_mcp_server.py) — 用 FastMCP 提供 stdio 天气 forecast 工具，可按环境变量模拟工具错误、坏响应、崩溃与挂起。
 
+- [`scripts/demo_068_085_context.py`](scripts/demo_068_085_context.py) — 用真实 SDK、隔离计划与偏好存储演示路由、稳定前缀、无损输入压缩、有限修订和候选引用。
+
 ## output
 
 - [`output/l0_l1_intent_routing.html`](output/l0_l1_intent_routing.html) — 提供 L0/L1 意图路由和规则否决条件的独立交互图解。
@@ -312,6 +323,7 @@
 - [`tests/test_execution_trace.py`](tests/test_execution_trace.py) — 验证真实主子事件、SQLite 回放与权限、脱敏、等待/失败状态、背压和断连清理。
 - [`tests/test_confirmation_routing.py`](tests/test_confirmation_routing.py) — 验证确认与选择的上下文、动作保真及 HTTP JSON/SSE 管理委派、两轮提交和令牌边界。
 - [`tests/test_delegation_retry.py`](tests/test_delegation_retry.py) — 验证显式委派重试、原参数复用、令牌状态保存及未恢复失败的 JSON/SSE 出口。
+- [`tests/test_068_085_context.py`](tests/test_068_085_context.py) — 验证真实 SDK 输入转换、结构化失败、两轮修订、候选隔离过期及显式偏好的认证和撤回。
 - [`tests/test_001.py`](tests/test_001.py) — 验证 001 配置、日期工具、HTTP 健康检查及模拟模型网关调用链。
 - [`tests/test_004_auth.py`](tests/test_004_auth.py) — 验证 004 登录、登出、用户信息隔离、401 拦截与密码哈希自动迁移。
 - [`tests/test_005_chat.py`](tests/test_005_chat.py) — 隔离意图模型后验证会话持久化、AgentState 恢复、用户隔离和 SSE 输出。

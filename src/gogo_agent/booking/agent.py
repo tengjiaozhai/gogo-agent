@@ -7,8 +7,10 @@ from agentscope.model import ChatModelBase
 from agentscope.state import AgentState
 from agentscope.tool import Toolkit
 
+from gogo_agent.context.input import PROMPT_VERSION
+
 BOOKING_AGENT_NAME = "BookingAgent"
-BOOKING_SYSTEM_PROMPT = (
+BOOKING_SYSTEM_PROMPT = f"[提示词版本 {PROMPT_VERSION}]\n" + (
     "你是 GoGo 的预订智能体。只处理已审核通过且差旅单已审批通过的方案。"
     "执行预订前必须先调用门禁工具并把摘要交给用户确认；你不能自行下单或取消，"
     "也不能修改审核结论或差旅单审批状态。供应商结果未知时只能说明未确认，不得宣称已预订成功。"

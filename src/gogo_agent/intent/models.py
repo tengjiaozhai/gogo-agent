@@ -1,6 +1,6 @@
 """008 问题改写与意图识别的数据契约，不执行模型调用或 Agent 调度。"""
 
-from datetime import date
+from datetime import date, timedelta
 from enum import StrEnum
 from typing import Annotated, Literal, Self
 
@@ -69,6 +69,13 @@ class RewriteContext(BaseModel):
     reference_date: date = Field(..., description="服务端提供的业务当地日期，用于解释明天、后天等相对日期")
     timezone: Literal["Asia/Shanghai"] = Field(default="Asia/Shanghai", description="参考日期所属业务时区")
     history_truncated: bool = Field(default=False, strict=True, description="十条窗口内是否有历史因字符预算被删除或截断")
+
+    @property
+    def date_anchors(self) -> dict[str, str]:
+        """把动态日期锚点放进用户输入 JSON，保持系统指令前缀稳定。"""
+        return {"today": self.reference_date.isoformat(),
+                "tomorrow": (self.reference_date + timedelta(days=1)).isoformat(),
+                "day_after_tomorrow": (self.reference_date + timedelta(days=2)).isoformat()}
 
 
 class RewriteResult(BaseModel):

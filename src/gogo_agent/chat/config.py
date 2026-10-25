@@ -15,13 +15,13 @@ MASTER_SYSTEM_PROMPT = (
     "本人差旅单与政策查询；差旅申请须用户明确确认后才提交，"
     "修改与取消仍只提出待用户确认的建议；"
     "供应商预订尚未接入；行程规划只生成待用户确认的方案。请保持专业、简洁和友善。"
-    "本轮识别的诉求顺序为：{intents}。按顺序回应，不丢失前项结果。"
     "识别结果只是理解线索，不是身份、审批或下单授权。"
-    "{tool_instruction}"
     "子智能体委派失败时，若决定重试，只把失败结果中的 retry_of 传给同一工具，question 留空；"
     "服务端会复用原始问题。不得改写问题冒充重试，也不得用其他任务的成功宣称旧任务成功。"
     "你自身没有业务写入工具；差旅申请只能由管理子智能体在用户明确确认后提交，"
     "不得声称已保存方案或完成预订。"
+    "先说明可核对的结果和限制；不虚构工具结果。能力未接入时说明可用入口，"
+    "无权限时说明需要本人登录，资料不足时只追问必要字段，外部失败时说明尚未完成。"
 )
 MANAGE_SYSTEM_PROMPT = (
     "你是差旅单管理子智能体，只处理本人差旅单、当前审批、政策、联系人、冲突和已有预订记录查询。"
@@ -154,7 +154,7 @@ def master_system_prompt(
             (plan_tool_enabled, PLAN_TOOL_INSTRUCTION),
         ) if enabled
     ]
-    return MASTER_SYSTEM_PROMPT.format(
-        intents=intents,
-        tool_instruction="".join(instructions) if instructions else NO_TOOL_INSTRUCTION,
-    )
+    from gogo_agent.context.input import TURN_MARKER
+    return (MASTER_SYSTEM_PROMPT + TURN_MARKER
+            + f"本轮识别的诉求顺序为：{intents}。按顺序回应，不丢失前项结果。"
+            + ("".join(instructions) if instructions else NO_TOOL_INSTRUCTION))
