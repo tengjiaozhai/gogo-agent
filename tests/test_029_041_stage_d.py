@@ -97,7 +97,7 @@ async def test_master_policy_registers_manage_and_child_has_no_supplier_tool(mas
 
 
 @pytest.mark.asyncio
-async def test_booking_intent_can_only_reach_manage_proposal_tool(master_http_case, monkeypatch, service):
+async def test_booking_intent_reaches_independent_booking_agent(master_http_case, monkeypatch, service):
     _, _, executor = master_http_case
     monkeypatch.setattr(executor, "_build_model", lambda stream=False, role="master": _FallbackMockModel(stream=stream))
     request = executor._save_user_turn("booking-route-037", "u001", "查询我的预订记录")
@@ -116,8 +116,9 @@ async def test_booking_intent_can_only_reach_manage_proposal_tool(master_http_ca
     )
     try:
         names = [item["function"]["name"] for item in await agent.toolkit.get_tool_schemas()]
-        assert names == ["itinerary_manage_agent"]
-        assert "新预订和供应商取消仍不可执行" in agent._system_prompt
+        assert names == ["booking_agent"]
+        assert "booking_agent" in agent._system_prompt
+        assert "网页明确确认" in agent._system_prompt
     finally:
         await executor._close_agent_model(agent)
 

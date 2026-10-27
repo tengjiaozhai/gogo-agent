@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+import math
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING, AsyncIterator
@@ -24,6 +25,20 @@ from .service import IntentRecognizer, QueryRewriter, create_text_model
 from .vector import IntentVectorConfig, IntentVectorIndex, IntentVectorMatcher
 
 
+def _intent_model_timeout() -> float:
+    """意图侧模型调用超时；思考型模型长尾明显，默认高于 060 的旧值。"""
+    raw = os.getenv("GOGO_INTENT_MODEL_TIMEOUT_SECONDS", "").strip()
+    if not raw:
+        return 120.0
+    try:
+        value = float(raw)
+    except ValueError:
+        raise ValueError("GOGO_INTENT_MODEL_TIMEOUT_SECONDS 必须是正数秒数") from None
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError("GOGO_INTENT_MODEL_TIMEOUT_SECONDS 必须是正数秒数")
+    return value
+
+
 @dataclass(frozen=True)
 class IntentRuntimeSettings:
     """同一网关的主/稳定聊天模型、embedding 模型与 Qdrant 索引配置。"""
@@ -32,6 +47,7 @@ class IntentRuntimeSettings:
     base_url: str
     chat_model_name: str
     stable_model_name: str
+    intent_model_timeout_seconds: float
     vector: IntentVectorConfig
 
 
@@ -67,6 +83,7 @@ def load_intent_runtime_settings() -> IntentRuntimeSettings:
         base_url=base_url,
         chat_model_name=os.getenv("GOGO_MODEL_NAME", "").strip(),
         stable_model_name=os.getenv("GOGO_STABLE_MODEL_NAME", "deepseek-v4-flash-0731").strip(),
+        intent_model_timeout_seconds=_intent_model_timeout(),
         vector=vector,
     )
 
@@ -77,9 +94,18 @@ async def open_intent_pipeline(history_service: ChatHistoryService) -> AsyncIter
     settings = load_intent_runtime_settings()
     if not settings.stable_model_name:
         raise ValueError("请在 .env 设置 GOGO_STABLE_MODEL_NAME")
+    credential = OpenAICredential(api_key=settings.api_key, base_url=settings.base_url)
+    # 改写要合并跨轮约束并输出自然语言，保留思考；分类只做判定，关思考换 4 倍延迟收益。
     text_model = create_text_model(
-        OpenAICredential(api_key=settings.api_key, base_url=settings.base_url),
+        credential,
         settings.stable_model_name,
+        timeout_seconds=settings.intent_model_timeout_seconds,
+    )
+    classify_model = create_text_model(
+        credential,
+        settings.stable_model_name,
+        timeout_seconds=settings.intent_model_timeout_seconds,
+        disable_thinking=True,
     )
     embedding = OpenAIEmbeddingModel(
         credential=OpenAICredential(api_key=settings.api_key, base_url=settings.base_url),
@@ -95,7 +121,7 @@ async def open_intent_pipeline(history_service: ChatHistoryService) -> AsyncIter
                 RewriteContextBuilder(history_service),
                 QueryRewriter(text_model),
                 IntentRecognizer(
-                    text_model,
+                    classify_model,
                     rule_matcher=IntentRuleMatcher(),
                     vector_matcher=IntentVectorMatcher(index),
                 ),
@@ -103,3 +129,4 @@ async def open_intent_pipeline(history_service: ChatHistoryService) -> AsyncIter
     finally:
         await embedding.client.close()
         await text_model.client.close()
+        await classify_model.client.close()

@@ -22,6 +22,12 @@ from pydantic import ValidationError
 from gogo_agent.intent.models import IntentCategory, QueryInput
 from gogo_agent.intent.pipeline import IntentPipelineService, PreparedIntentTurn
 from gogo_agent.intent.runtime import open_intent_pipeline
+from gogo_agent.booking.agent import build_booking_agent
+from gogo_agent.booking.chat import BookingChatTurn
+from gogo_agent.booking.dependencies import get_booking_service
+from gogo_agent.booking.service import BookingError, BookingService
+from gogo_agent.booking.tools import build_booking_toolkit
+from gogo_agent.travel.confirmation import ConfirmationError
 from gogo_agent.model import create_chat_model
 from gogo_agent.context.input import ModelInputContext
 from gogo_agent.context.preferences import get_preference_store
@@ -112,12 +118,13 @@ class ChatAgentExecutor:
     MANAGE_TOOL_NAME = "itinerary_manage_agent"
     PLAN_AGENT_NAME = _PLAN_AGENT_LABEL
     PLAN_TOOL_NAME = "itinerary_plan_agent"
+    BOOKING_AGENT_NAME = "BookingAgent"
+    BOOKING_TOOL_NAME = "booking_agent"
     PLAN_INTENTS = frozenset({IntentCategory.ITINERARY_PLANNING})
     MANAGE_INTENTS = frozenset({
         IntentCategory.TRAVEL_APPLICATION, IntentCategory.TRAVEL_CANCEL,
         IntentCategory.TRAVEL_MODIFY, IntentCategory.APPROVAL_QUERY,
         IntentCategory.TRAVEL_ORDER_QUERY, IntentCategory.POLICY_QUERY,
-        IntentCategory.BOOKING,
     })
 
     def __init__(
@@ -127,6 +134,7 @@ class ChatAgentExecutor:
         pipeline_factory: Callable[[ChatHistoryService], AsyncContextManager[IntentPipelineService]] = open_intent_pipeline,
         active_continuation: ActiveAgentContinuation | None = None,
         settings: ChatAgentSettings | None = None,
+        booking_service_factory: Callable[[], BookingService] = get_booking_service,
     ):
         self._history_service = chat_history_service or ChatHistoryService()
         self._session_store = agent_session_store or create_agent_session_store()
@@ -136,6 +144,7 @@ class ChatAgentExecutor:
             self._state_session_id, lambda: self._settings.info_tool_timeout_seconds,
         )
         self._settings = settings or load_chat_agent_settings()
+        self._booking_service_factory = booking_service_factory
 
     @property
     def history_service(self) -> ChatHistoryService:
@@ -148,7 +157,7 @@ class ChatAgentExecutor:
     def _build_model(self, stream: bool = False, *, role: str = "master") -> ChatModelBase:
         """正式模型按角色选主/稳定模型；离线测试显式注入替身。"""
         settings = require_model_configuration()
-        if role not in ("master", "info", "manage", "recommendation", "plan", "review"):
+        if role not in ("master", "info", "manage", "recommendation", "plan", "review", "booking"):
             raise ValueError("未知聊天模型角色")
         return create_chat_model(
             OpenAICredential(
@@ -156,7 +165,7 @@ class ChatAgentExecutor:
                 base_url=settings.base_url,
             ),
             (
-                settings.chat_model_name if role in ("master", "manage", "plan")
+                settings.chat_model_name if role in ("master", "manage", "plan", "booking")
                 else self._settings.recommendation_model_name if role == "recommendation"
                 else settings.stable_model_name
             ),
@@ -197,6 +206,7 @@ class ChatAgentExecutor:
         self._session_store.delete_agent_state(state_session_id, agent_name=self.INFO_AGENT_NAME)
         self._session_store.delete_agent_state(state_session_id, agent_name=self.MANAGE_AGENT_NAME)
         self._session_store.delete_agent_state(state_session_id, agent_name=self.PLAN_AGENT_NAME)
+        self._session_store.delete_agent_state(state_session_id, agent_name=self.BOOKING_AGENT_NAME)
         self._session_store.delete_active_agent(state_session_id)
         self._session_store.delete_agent_state(session_id, agent_name=self.COORDINATOR_AGENT_NAME)
 
@@ -277,6 +287,16 @@ class ChatAgentExecutor:
         )
         return agent, review_model
 
+    def _build_booking_agent(self, request: RequestContext, turn: BookingChatTurn, *, trace: ExecutionTrace | None = None) -> Agent:
+        """仅在服务端验证结构化确认后开放无参数执行工具，模型不能选择另一个授权对象。"""
+        key = self._state_session_id(request.session_id, request.user_id)
+        return build_booking_agent(
+            model=self._build_model(stream=False, role="booking"),
+            toolkit=build_booking_toolkit(self._booking_service_factory(), request, turn=turn),
+            state=self._session_store.load_agent_state(key, agent_name=self.BOOKING_AGENT_NAME) or AgentState(session_id=key),
+            middlewares=self._input_middlewares(request, trace),
+        )
+
     def _build_agent(
         self,
         state: AgentState,
@@ -288,6 +308,8 @@ class ChatAgentExecutor:
         manage_states: list[AgentState] | None = None,
         plan_states: list[AgentState] | None = None,
         trace: ExecutionTrace | None = None,
+        booking_states: list[AgentState] | None = None,
+        booking_turn: BookingChatTurn | None = None,
     ) -> Agent:
         """用识别结果决定本轮可见工具；身份仍从可信请求参数传入。"""
         model = self._build_model(stream=stream)
@@ -297,6 +319,7 @@ class ChatAgentExecutor:
         has_info = any(item.intent == IntentCategory.GENERAL_INFO for item in prepared.decision.result.intents)
         has_manage = any(item.intent in self.MANAGE_INTENTS for item in prepared.decision.result.intents)
         has_plan = any(item.intent in self.PLAN_INTENTS for item in prepared.decision.result.intents)
+        has_booking = any(item.intent == IntentCategory.BOOKING for item in prepared.decision.result.intents)
         if has_info:
             async def ask_info_agent(question: str = "", retry_of: str = "") -> str:
                 """委派只读公共信息查询；失败后只填 retry_of 重试，question 留空，复用原问题。"""
@@ -318,6 +341,8 @@ class ChatAgentExecutor:
                             raise ValueError("信息子 Agent 没有返回可用回答")
                         if info_states is not None:
                             info_states.append(child.state)
+                        if booking_turn is not None:
+                            booking_turn.other_answers.append(answer)
                         return answer
                     finally:
                         await self._close_agent_model(child)
@@ -355,6 +380,8 @@ class ChatAgentExecutor:
                             raise ValueError("差旅管理 Agent 没有返回可用回答")
                         if manage_states is not None:
                             manage_states.append(child.state)
+                        if booking_turn is not None:
+                            booking_turn.other_answers.append(answer)
                         return answer
                     finally:
                         await self._close_agent_model(child)
@@ -393,6 +420,8 @@ class ChatAgentExecutor:
                             raise ValueError("行程规划 Agent 没有返回可用回答")
                         if plan_states is not None:
                             plan_states.append(child.state)
+                        if booking_turn is not None:
+                            booking_turn.other_answers.append(answer)
                         return answer
                     finally:
                         await self._close_agent_model(child)
@@ -415,13 +444,35 @@ class ChatAgentExecutor:
                     message="允许受控行程规划，不包含预订或差旅单提交",
                 ),
             ))
+        if has_booking:
+            turn = booking_turn or BookingChatTurn(request, self._history_service, self._booking_service_factory)
+
+            async def ask_booking_agent(question: str = "", retry_of: str = "") -> str:
+                """委派本人预订查询、门禁与模拟执行；执行对象只来自服务端本轮已验证的网页确认。"""
+                async def invoke(original_question: str) -> str:
+                    child = self._build_booking_agent(request, turn, trace=trace)
+                    try:
+                        async with asyncio.timeout(self._settings.booking_tool_timeout_seconds):
+                            reply = await child.reply(UserMsg(name=self.COORDINATOR_AGENT_NAME, content=original_question))
+                        if reply.finished_reason != ReplyFinishedReason.COMPLETED:
+                            raise RuntimeError(f"BookingAgent finished with {reply.finished_reason}")
+                        if booking_states is not None:
+                            booking_states.append(child.state)
+                        return reply.get_text_content() or ""
+                    finally:
+                        await self._close_agent_model(child)
+                return await attempts.run(self.BOOKING_TOOL_NAME, self.BOOKING_AGENT_NAME, question, retry_of, invoke)
+
+            tools.append(FunctionTool(ask_booking_agent, name=self.BOOKING_TOOL_NAME, is_read_only=False,
+                                      is_concurrency_safe=False, permission=PermissionDecision(
+                                          behavior=PermissionBehavior.ALLOW, message="允许预订委派；写入必须由本轮可信网页确认授权")))
         toolkit = Toolkit(tools=tools) if tools else None
         return Agent(
             name=self.COORDINATOR_AGENT_NAME,
             middlewares=self._input_middlewares(request, trace),
             system_prompt=master_system_prompt(
                 intents, info_tool_enabled=has_info, manage_tool_enabled=has_manage,
-                plan_tool_enabled=has_plan,
+                plan_tool_enabled=has_plan, booking_tool_enabled=has_booking,
             ),
             model=model,
             toolkit=toolkit,
@@ -445,6 +496,8 @@ class ChatAgentExecutor:
         manage_states: list[AgentState],
         plan_states: list[AgentState] | None = None,
         trace: ExecutionTrace | None = None,
+        booking_states: list[AgentState] | None = None,
+        booking_turn: BookingChatTurn | None = None,
     ) -> Agent:
         """保留 020–026 测试替身的旧签名，同时让正式入口收集 Info 状态。"""
         parameter_map = signature(self._build_agent).parameters
@@ -467,6 +520,10 @@ class ChatAgentExecutor:
             kwargs["plan_states"] = plan_states if plan_states is not None else []
         if "trace" in parameter_map or accepts_extra:
             kwargs["trace"] = trace
+        if "booking_states" in parameter_map or accepts_extra:
+            kwargs["booking_states"] = booking_states if booking_states is not None else []
+        if "booking_turn" in parameter_map or accepts_extra:
+            kwargs["booking_turn"] = booking_turn
         return self._build_agent(**kwargs)
 
     def _save_user_turn(self, session_id: str, user_id: str, message: str) -> RequestContext:
@@ -477,6 +534,15 @@ class ChatAgentExecutor:
             raise HTTPException(422, "消息不能为空") from None
         request_id = self._history_service.save_user_message(session_id, user_id, message)
         return RequestContext(user_id=user_id, session_id=session_id, request_id=request_id)
+
+    def _booking_turn(self, request: RequestContext, token: str | None) -> BookingChatTurn:
+        turn = BookingChatTurn(request, self._history_service, self._booking_service_factory)
+        if token is not None:
+            try:
+                turn.verify_client_confirmation(token)
+            except (ConfirmationError, BookingError) as exc:
+                raise HTTPException(409, str(exc)) from None
+        return turn
 
     def _active_agent_for_turn(self, request: RequestContext, message: str) -> str | None:
         """只接受已注册名称与完整续跑词；无记录或无效记录进入完整流水线。"""
@@ -543,6 +609,7 @@ class ChatAgentExecutor:
         self, prepared: PreparedIntentTurn, request: RequestContext,
         tool_calls: list[dict[str, str]] | None = None,
         trace: ExecutionTrace | None = None,
+        booking_turn: BookingChatTurn | None = None,
     ) -> dict:
         """保存可调试层级与分支，不保存密钥、原始模型响应或可信身份。"""
         decision = prepared.decision
@@ -560,6 +627,10 @@ class ChatAgentExecutor:
             extra["tool_calls"] = tool_calls
         if trace is not None:
             extra["timeline"] = trace.timeline
+        if booking_turn is not None and (booking_turn.pending or booking_turn.results):
+            extra["booking_confirmations"] = [item.model_dump() for item in booking_turn.pending]
+            extra["booking_results"] = booking_turn.results
+            extra["timeline"] = [*(trace.timeline if trace else []), *booking_turn.timeline]
         return extra
 
     @staticmethod
@@ -592,6 +663,7 @@ class ChatAgentExecutor:
         session_id: str,
         user_id: str,
         message: str,
+        booking_confirmation_token: str | None = None,
     ) -> tuple[str, str]:
         """执行单轮完整对话。
 
@@ -605,12 +677,13 @@ class ChatAgentExecutor:
         request = self._save_user_turn(session_id, user_id, message)
         with trace_scope(request):
             logger.info("chat turn started", extra={"trace_id": current_trace_id()})
-            active_name = self._active_agent_for_turn(request, message)
+            booking_turn = self._booking_turn(request, booking_confirmation_token)
+            active_name = None if booking_turn.confirmed else self._active_agent_for_turn(request, message)
             if active_name is not None:
                 return await self._continue_active_turn(
                     request, active_name, message, ExecutionTrace(root_agent=active_name),
                 )
-            prepared = await self._prepare_turn(request)
+            prepared = booking_turn.prepared_turn(message) if booking_turn.confirmed else await self._prepare_turn(request)
             if prepared.branch == "needs_context":
                 text = self._clarification(prepared)
                 msg_id = self._history_service.save_assistant_message(
@@ -626,6 +699,7 @@ class ChatAgentExecutor:
             info_states: list[AgentState] = []
             manage_states: list[AgentState] = []
             plan_states: list[AgentState] = []
+            booking_states: list[AgentState] = []
             trace = ExecutionTrace(intent=self._pipeline_extra(prepared, request)["intent_pipeline"])
             try:
                 agent_state = self._session_store.load_agent_state(
@@ -639,7 +713,7 @@ class ChatAgentExecutor:
                     state=agent_state, prepared=prepared, request=request,
                     tool_calls=tool_calls, stream=False, info_states=info_states,
                     manage_states=manage_states, plan_states=plan_states,
-                    trace=trace,
+                    trace=trace, booking_states=booking_states, booking_turn=booking_turn,
                 )
                 reply_msg = await agent.reply(UserMsg(name="user", content=prepared.effective_question.question))
             except Exception as exc:
@@ -654,7 +728,10 @@ class ChatAgentExecutor:
             )
             if error:
                 raise HTTPException(503, error)
-            reply_text = reply_msg.get_text_content() or ""
+            try:
+                reply_text = booking_turn.reply_text(reply_msg.get_text_content() or "", prepared)
+            except BookingError as exc:
+                raise HTTPException(503, str(exc)) from None
 
             with reply_transaction(self._history_service.repository, self._session_store):
                 # 先保存业务可见回复；失败时不得写入一份看不到的 AgentState。
@@ -663,10 +740,12 @@ class ChatAgentExecutor:
                     user_id=request.user_id,
                     content=reply_text,
                     agent_name=self.COORDINATOR_AGENT_NAME,
-                    extra=self._pipeline_extra(prepared, request, tool_calls, trace),
+                    extra=self._pipeline_extra(prepared, request, tool_calls, trace, booking_turn),
                 )
 
                 # 可见回复成功保存后才提交 AgentState；失败轮次不推进子 Agent 记忆。
+                if booking_states:
+                    self._session_store.save_agent_state(state_session_id, booking_states[-1], agent_name=self.BOOKING_AGENT_NAME)
                 if info_states:
                     self._session_store.save_agent_state(
                         state_session_id, info_states[-1], agent_name=self.INFO_AGENT_NAME,
@@ -682,7 +761,7 @@ class ChatAgentExecutor:
                 self._session_store.save_agent_state(
                     state_session_id, agent.state, agent_name=self.COORDINATOR_AGENT_NAME,
                 )
-                if info_states:
+                if info_states and not booking_states:
                     self._active_continuation.record_completed_agent(request, self.INFO_AGENT_NAME)
 
             return reply_text, msg_id
@@ -692,6 +771,7 @@ class ChatAgentExecutor:
         session_id: str,
         user_id: str,
         message: str,
+        booking_confirmation_token: str | None = None,
     ) -> AsyncGenerator[str, None]:
         """在 SSE 响应开始前完成鉴权与 017 预处理，再逐 Token 推送。
 
@@ -705,7 +785,8 @@ class ChatAgentExecutor:
         request = self._save_user_turn(session_id, user_id, message)
         with trace_scope(request):
             logger.info("chat stream prepared", extra={"trace_id": current_trace_id()})
-            active_name = self._active_agent_for_turn(request, message)
+            booking_turn = self._booking_turn(request, booking_confirmation_token)
+            active_name = None if booking_turn.confirmed else self._active_agent_for_turn(request, message)
             if active_name is not None:
                 trace = ExecutionTrace(root_agent=active_name, streaming=True)
 
@@ -724,7 +805,7 @@ class ChatAgentExecutor:
                         yield "event: suggestions\ndata: " + json.dumps(suggestions, ensure_ascii=False) + "\n\n"
 
                 return self._traced_stream(request, trace.stream(continuation_events()))
-            prepared = await self._prepare_turn(request)
+            prepared = booking_turn.prepared_turn(message) if booking_turn.confirmed else await self._prepare_turn(request)
             if prepared.branch == "needs_context":
                 text = self._clarification(prepared)
                 msg_id = self._history_service.save_assistant_message(
@@ -740,7 +821,7 @@ class ChatAgentExecutor:
 
                 return self._traced_stream(request, clarification_events())
             trace = ExecutionTrace(streaming=True, intent=self._pipeline_extra(prepared, request)["intent_pipeline"])
-            return self._traced_stream(request, trace.stream(self._stream_prepared_turn(request, prepared, trace)))
+            return self._traced_stream(request, trace.stream(self._stream_prepared_turn(request, prepared, trace, booking_turn)))
 
     @staticmethod
     async def _traced_stream(
@@ -761,6 +842,7 @@ class ChatAgentExecutor:
 
     async def _stream_prepared_turn(
         self, request: RequestContext, prepared: PreparedIntentTurn, trace: ExecutionTrace,
+        booking_turn: BookingChatTurn,
     ) -> AsyncGenerator[str, None]:
         """只在预处理成功后执行 Agent，保留 005 的 message/message_id 事件。"""
         logger.info("chat stream started", extra={"trace_id": current_trace_id()})
@@ -773,6 +855,8 @@ class ChatAgentExecutor:
         info_states: list[AgentState] = []
         manage_states: list[AgentState] = []
         plan_states: list[AgentState] = []
+        booking_states: list[AgentState] = []
+        has_booking = any(item.intent == IntentCategory.BOOKING for item in prepared.decision.result.intents)
         final_reason: ReplyFinishedReason | None = None
 
         try:
@@ -787,7 +871,7 @@ class ChatAgentExecutor:
                 state=agent_state, prepared=prepared, request=request,
                 tool_calls=tool_calls, stream=True, info_states=info_states,
                 manage_states=manage_states, plan_states=plan_states,
-                trace=trace,
+                trace=trace, booking_states=booking_states, booking_turn=booking_turn,
             )
             async for event in agent.reply_stream(
                 UserMsg(name="user", content=prepared.effective_question.question),
@@ -795,9 +879,10 @@ class ChatAgentExecutor:
             ):
                 if isinstance(event, TextBlockDeltaEvent) and event.delta:
                     accumulated_chunks.append(event.delta)
-                    lines = event.delta.split("\n")
-                    data_lines = "\n".join(f"data: {line}" for line in lines)
-                    yield f"event: message\n{data_lines}\n\n"
+                    if not has_booking:
+                        lines = event.delta.split("\n")
+                        data_lines = "\n".join(f"data: {line}" for line in lines)
+                        yield f"event: message\n{data_lines}\n\n"
                 elif isinstance(event, Msg):
                     final_reason = event.finished_reason
         except Exception as exc:
@@ -825,7 +910,16 @@ class ChatAgentExecutor:
                     full_reply_text = fallback_text
                     lines = full_reply_text.split("\n")
                     data_lines = "\n".join(f"data: {line}" for line in lines)
-                    yield f"event: message\n{data_lines}\n\n"
+                    if not has_booking:
+                        yield f"event: message\n{data_lines}\n\n"
+
+        try:
+            full_reply_text = booking_turn.reply_text(full_reply_text, prepared)
+        except BookingError as exc:
+            yield f"event: error\ndata: {exc}\n\n"
+            return
+        if has_booking and full_reply_text:
+            yield "event: message\n" + "\n".join(f"data: {line}" for line in full_reply_text.split("\n")) + "\n\n"
 
         # 先保存业务可见回复；失败时不提交新 AgentState。
         try:
@@ -835,10 +929,12 @@ class ChatAgentExecutor:
                     user_id=request.user_id,
                     content=full_reply_text,
                     agent_name=self.COORDINATOR_AGENT_NAME,
-                    extra=self._pipeline_extra(prepared, request, tool_calls, trace),
+                    extra=self._pipeline_extra(prepared, request, tool_calls, trace, booking_turn),
                 )
 
                 # 再提交本轮 AgentState；若失败，SSE 不报完成。
+                if booking_states:
+                    self._session_store.save_agent_state(state_session_id, booking_states[-1], agent_name=self.BOOKING_AGENT_NAME)
                 if info_states:
                     self._session_store.save_agent_state(
                         state_session_id, info_states[-1], agent_name=self.INFO_AGENT_NAME,
@@ -854,11 +950,16 @@ class ChatAgentExecutor:
                 self._session_store.save_agent_state(
                     state_session_id, agent.state, agent_name=self.COORDINATOR_AGENT_NAME,
                 )
-                if info_states:
+                if info_states and not booking_states:
                     self._active_continuation.record_completed_agent(request, self.INFO_AGENT_NAME)
         except Exception as exc:
             yield f"event: error\ndata: 回复保存失败（{type(exc).__name__}）\n\n"
             return
+
+        # 只有回复与状态提交后才把确认凭据/供应商事实交给网页，随后 message_id 使卡片可操作。
+        for item in booking_turn.timeline:
+            event_name = "booking_confirmation" if item["kind"] == "booking_confirmation" else "booking_result"
+            yield f"event: {event_name}\ndata: " + json.dumps(item["data"], ensure_ascii=False) + "\n\n"
 
         # 步骤 6：发送消息 ID 的 SSE 完成事件
         yield f"event: message_id\ndata: {msg_id}\n\n"

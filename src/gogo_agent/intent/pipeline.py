@@ -38,7 +38,7 @@ class PreparedIntentTurn(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    branch: Literal["fast", "rewritten", "needs_context"] = Field(
+    branch: Literal["fast", "rewritten", "needs_context", "confirmed_booking"] = Field(
         ..., description="本轮实际走过的快速命中、改写识别或待补上下文分支"
     )
     original_question: QueryInput = Field(..., description="业务历史中已保存的用户原问题")
@@ -54,7 +54,7 @@ class PreparedIntentTurn(BaseModel):
     @model_validator(mode="after")
     def validate_branch(self) -> Self:
         """防止把未完成改写或空识别结果交给主 Agent。"""
-        if self.branch == "fast":
+        if self.branch in {"fast", "confirmed_booking"}:
             if self.fast_decision.result is None or self.rewrite is not None:
                 raise ValueError("快速分支必须命中且不能调用改写")
             if self.effective_question != self.original_question or self.decision != self.fast_decision:

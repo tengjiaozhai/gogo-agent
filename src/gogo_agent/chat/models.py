@@ -78,6 +78,7 @@ class ChatRequest(BaseModel):
     """发送对话消息请求体。"""
 
     message: str = Field(default="", description="用户向智能体发送的输入文本内容")
+    booking_confirmation_token: str | None = Field(default=None, min_length=1, max_length=4096, repr=False, description="本人在网页明确确认的预订摘要凭据；独立于模型可见文字")
 
 
 class UpdateTitleRequest(BaseModel):
@@ -101,6 +102,7 @@ class ChatJSONResponse(BaseModel):
     sessionId: str = Field(..., description="所属会话 ID")
     messageId: str = Field(..., description="本次助手回复的消息 ID")
     content: str = Field(..., description="助手完整回复正文文本")
+    timeline: list[dict] | None = Field(default=None, description="本轮结构化预订确认与结果；不存在时省略")
 
 
 class ActionResponse(BaseModel):

@@ -2,7 +2,7 @@
 
 你已经学完[前端触发规划 Agent](阶段E-前端触发规划Agent逐步调试.md)。这一篇继续沿着“入口 → 工具 → 业务服务 → 外部结果 → 本地记录”单步观察，重点看：**谁能下单、为什么只能下一单、超时后为什么不能直接重试、取消先改哪里。**
 
-**先说明当前状态（2026-10-25 核对）：预订核心及离线练习已实现；聊天委派到 `BookingAgent`、预订结构化确认和预订结果事件未实现。** 因此这次以现有离线脚本为主要 Debug 入口，浏览器用于理解接线边界。不能照搬规划篇，在聊天里输入“确认预订”就期待进入 `BookingAgent`。
+**当前状态：预订核心、聊天委派、网页结构化确认、模拟执行与结果回放已接通。** 本篇前半仍用组件脚本学习业务层；网页全链请转到[完整链路调试指南](预订Agent-网页完整链路调试.md)，运行 `scripts/demo_booking_chat.py`。真实供应商与支付未接入。
 
 已有[阶段 F 组件指南](阶段F-061-067-调试指南.md)保留完整组件说明；本篇按初次学习的顺序组织，优先跑通一段预订，再看失败分支。编号与验收对应[阶段 F 学习路线](../学习路线/阶段F-061-067.md)。
 
@@ -13,10 +13,10 @@
 | 责任 | 规划篇中你已经见过的 | 当前预订实现 |
 | --- | --- | --- |
 | 形成候选、计算、审核 | `ItineraryPlanAgent` 的五个工具 | 读取同一方案及当前内容版本的审核结论，不能改审核 |
-| 模型能调用的工具 | `create_plan`、`search_candidates`、`compute_plan`、`review_plan`、`get_plan` | `prepare_booking`、`query_booking`，都是只读工具 |
+| 模型能调用的工具 | `create_plan`、`search_candidates`、`compute_plan`、`review_plan`、`get_plan` | 默认门禁与查询工具；本轮网页确认通过后才增加 `execute_confirmed_booking` |
 | 真正向供应商创建订单 | 没有 | 服务端显式调用 `BookingService.book(..., confirmed=True)` |
-| 用户确认 | 规划不等于确认购买 | 目前服务方法检查布尔值；尚未接入聊天中的可信确认流程 |
-| 聊天入口 | 主 Agent 可挂载 `itinerary_plan_agent` | 没有挂载 `booking_agent`；`booking` 意图仍挂载差旅管理工具 |
+| 用户确认 | 规划不等于确认购买 | 网页提交独立确认字段，服务端验证已保存摘要与当前方案；内部业务方法仍接受可信调用方的布尔值 |
+| 聊天入口 | 主 Agent 可挂载 `itinerary_plan_agent` | 已挂载独立 `booking_agent`；网页确认后仅执行服务端验证的项目 |
 
 `BookingAgent` 是模型协调层，`BookingService` 是确定性业务层。**当前脚本直接调业务层，不运行预订 Agent 的模型推理循环。** 先学业务规则，再看第 5 节的 Agent 装配，就不会把提示词当成下单事实。
 
@@ -104,16 +104,16 @@ PYTHONPATH=src .venv/bin/python scripts/demo_061_067_booking.py --case book
 | 步 | 断点文件与语句 | 第几次命中、进入前状态 | 观察变量与预期 | 下一步及原因 |
 | --- | --- | --- | --- | --- |
 | B0 | [脚本:99](../../scripts/demo_061_067_booking.py) `plan_id = lab.reviewed_plan(...)` | 初始化后 | F8 后 `plan_id` 已生成；供应商调用 0，本地预订 0 | 前置完成，进入第一次 `book` |
-| B1 | [service.py:142](../../src/gogo_agent/booking/service.py) `if not confirmed:` | `book` 第 1 次：`confirmed=False` | 第一次 F8 到下一行 `raise`，再 F8 才抛 `BookingError`，`code=CONFIRMATION_REQUIRED`；调用次数仍为 0 | 脚本捕获后进入第 2 次 `book`，不是供应商重试 |
-| B2 | [service.py:144](../../src/gogo_agent/booking/service.py) `plan, proposal = self._gate(...)` | 第 2 次：`confirmed=True` | `user_id='u001'`、`proposal_tag='综合最佳'`、`leg='outbound'` | F7 进 `_gate` 看审核与审批 |
-| B3 | [service.py:115](../../src/gogo_agent/booking/service.py) `review = plan.last_review` | 计划已计算；`proposal` 已选出 | `plan.review_is_current()` 为真；`review.proposal_tag` 相同，`review.verdict.value == 'PASS'` | 同一代表方案、同一内容版本的审核才有效 |
-| B4 | [service.py:123](../../src/gogo_agent/booking/service.py) `order = self.travel.get_order(...)` | `plan.order_id` 非空 | 执行后 `order.status.value == 'APPROVED'`；计划与差旅单都按本人查 | 通过后回到 `book` 生成请求 |
-| B5 | [service.py:152](../../src/gogo_agent/booking/service.py) `booking_id = booking_id_for(...)` | 尚未写预订 | 执行后 ID 以 `bk_` 开头；`payload['amount']=='1200.00'`；`existing` 随后为 `None` | 检查同行程段已有确认单，再插入待处理行 |
-| B6 | [service.py:158](../../src/gogo_agent/booking/service.py) `self._insert_pending(...)` | 本地预订 0 | F8 后本地预订 1：`status='CREATED'`、`external_status='PENDING_SUPPLIER'`，供应商调用仍为 0 | **事务已提交**，才开始外部调用 |
-| B7 | [service.py:203](../../src/gogo_agent/booking/service.py) `order = self.supplier.create_order(...)` | 本地已留请求证据 | F8 后模拟供应商调用 1；`order.order_no=='SUP000001'` | 正常返回进入 `_finish_confirmed` |
-| B8 | [service.py:251](../../src/gogo_agent/booking/service.py) `row.status = BookingStatus.CONFIRMED.value` | 已取得供应商结果 | 继续执行后续字段赋值，直到事务退出、服务返回，再看本地状态与外部状态均为 `CONFIRMED`、外部单号非空；一次 F8 只完成当前赋值 | 返回 `BookingOutcome` 给脚本 |
-| B9 | [service.py:154](../../src/gogo_agent/booking/service.py) `if existing is not None:` | `book` 第 3 次；参数与第 2 次相同 | 仍先过 `_gate`；`booking_id` 相同，`existing` 非空 | 进入 `_replay`，跳过 `_insert_pending/_execute` |
-| B10 | [service.py:218](../../src/gogo_agent/booking/service.py) `if row['status'] == ...` | 已有确认记录且摘要相同 | 返回已有 `CONFIRMED`；供应商调用 1，本地记录 1 | 三次服务调用结束 |
+| B1 | [service.py](../../src/gogo_agent/booking/service.py) `if not confirmed:` | `book` 第 1 次：`confirmed=False` | 第一次 F8 到下一行 `raise`，再 F8 才抛 `BookingError`，`code=CONFIRMATION_REQUIRED`；调用次数仍为 0 | 脚本捕获后进入第 2 次 `book`，不是供应商重试 |
+| B2 | [service.py](../../src/gogo_agent/booking/service.py) `plan, proposal = self._gate(...)` | 第 2 次：`confirmed=True` | `user_id='u001'`、`proposal_tag='综合最佳'`、`leg='outbound'` | F7 进 `_gate` 看审核与审批 |
+| B3 | [service.py](../../src/gogo_agent/booking/service.py) `review = plan.last_review` | 计划已计算；`proposal` 已选出 | `plan.review_is_current()` 为真；`review.proposal_tag` 相同，`review.verdict.value == 'PASS'` | 同一代表方案、同一内容版本的审核才有效 |
+| B4 | [service.py](../../src/gogo_agent/booking/service.py) `order = self.travel.get_order(...)` | `plan.order_id` 非空 | 执行后 `order.status.value == 'APPROVED'`；计划与差旅单都按本人查 | 通过后回到 `book` 生成请求 |
+| B5 | [service.py](../../src/gogo_agent/booking/service.py) `booking_id = booking_id_for(...)` | 尚未写预订 | 执行后 ID 以 `bk_` 开头；`payload['amount']=='1200.00'`；`existing` 随后为 `None` | 检查同行程段的确认单、处理中或未知单，再插入待处理行 |
+| B6 | [service.py](../../src/gogo_agent/booking/service.py) `self._insert_pending(...)` | 本地预订 0 | F8 后本地预订 1：`status='CREATED'`、`external_status='PENDING_SUPPLIER'`，供应商调用仍为 0 | **事务已提交**，才开始外部调用 |
+| B7 | [service.py](../../src/gogo_agent/booking/service.py) `order = self.supplier.create_order(...)` | 本地已留请求证据 | F8 后模拟供应商调用 1；`order.order_no=='SUP000001'` | 正常返回进入 `_finish_confirmed` |
+| B8 | [service.py](../../src/gogo_agent/booking/service.py) `row.status = BookingStatus.CONFIRMED.value` | 已取得供应商结果 | 继续执行后续字段赋值，直到事务退出、服务返回，再看本地状态与外部状态均为 `CONFIRMED`、外部单号非空；一次 F8 只完成当前赋值 | 返回 `BookingOutcome` 给脚本 |
+| B9 | [service.py](../../src/gogo_agent/booking/service.py) `if existing is not None:` | `book` 第 3 次；参数与第 2 次相同 | 仍先过 `_gate`；`booking_id` 相同，`existing` 非空 | 进入 `_replay`，跳过 `_insert_pending/_execute` |
+| B10 | [service.py](../../src/gogo_agent/booking/service.py) `if row['status'] == ...` | 已有确认记录且摘要相同 | 返回已有 `CONFIRMED`；供应商调用 1，本地记录 1 | 三次服务调用结束 |
 
 ### 在断点里核对四类事实
 
@@ -163,8 +163,8 @@ PYTHONPATH=src .venv/bin/python scripts/demo_061_067_booking.py --case lost
 | 步 | 断点与触发 | 看什么、预期 | 后续去向 |
 | --- | --- | --- | --- |
 | L1 | [supplier.py:85](../../src/gogo_agent/booking/supplier.py) `mode = self._next_mode()`，两套 Lab 各首次创建 | 第一套为 `lost_after_commit`：先保存供应商订单再抛异常；第二套为 `lost_before_commit`：不保存订单就抛异常 | 两者都进入服务端未知结果分支 |
-| L2 | [service.py:208](../../src/gogo_agent/booking/service.py) `self._mark_unknown(...)` | 执行后本地 `status='CREATED'`，`external_status='UNKNOWN'` | **不是**把本地 `status` 改为 `UNKNOWN`；随后只读对账 |
-| L3 | [service.py:228](../../src/gogo_agent/booking/service.py) `order = call_read_with_retry(...)` | 第一套查到 `SupplierOrder`；第二套查到 `None` | 查到则 `_finish_confirmed`；查不到返回 `resolution='UNKNOWN'` |
+| L2 | [service.py](../../src/gogo_agent/booking/service.py) `self._mark_unknown(...)` | 执行后本地 `status='CREATED'`，`external_status='UNKNOWN'` | **不是**把本地 `status` 改为 `UNKNOWN`；随后只读对账 |
+| L3 | [service.py](../../src/gogo_agent/booking/service.py) `order = call_read_with_retry(...)` | 第一套查到 `SupplierOrder`；第二套查到 `None` | 查到则 `_finish_confirmed`；查不到返回 `resolution='UNKNOWN'` |
 | L4 | [脚本:126](../../scripts/demo_061_067_booking.py) `again = lab.service.book(...)`，仅第二套执行 | 仍是同一内容版本、同一业务键；`create_calls==1` | 重新过门禁后 `_replay → _reconcile`，不会再次 `create_order` |
 
 第一套的保存顺序是：本地 pending → 供应商已建单 → 响应丢失 → 本地标未知 → 查询找到 → 本地确认。第二套是：本地 pending → 响应丢失 → 标未知 → 查询无结果 → 保持未知；同键再调用仍只查询。
@@ -183,20 +183,20 @@ PyCharm 可新建 **Python tests → pytest** 配置：Working directory、Inter
 
 | 步 | 断点与触发 | 应观察的内容 |
 | --- | --- | --- |
-| A1 | [tools.py:30](../../src/gogo_agent/booking/tools.py) `user_id = request.user_id`；先 Debug `test_061_booking_toolkit_has_no_writable_tool_and_no_plan_or_review_mutation` | 执行后 `user_id='u001'`；此时嵌套函数尚未定义，继续到 A1b |
-| A1b | [tools.py:56](../../src/gogo_agent/booking/tools.py) `return Toolkit(tools=[` | 两个嵌套函数已经定义；`prepare_booking.__code__.co_freevars` 包含 `service`、`user_id`，闭包保存身份；返回后在 A2 看模型 schema 不含身份参数 |
-| A2 | [测试:136](../../tests/test_061_067_booking.py) `assert names == ...` | `names == {'prepare_booking', 'query_booking'}`；没有下单、取消或修改审核工具 |
+| A1 | [tools.py](../../src/gogo_agent/booking/tools.py) `user_id = request.user_id`；先 Debug `test_061_booking_toolkit_has_no_writable_tool_and_no_plan_or_review_mutation` | 执行后 `user_id='u001'`；此时嵌套函数尚未定义，继续到 A1b |
+| A1b | [tools.py](../../src/gogo_agent/booking/tools.py) `return Toolkit(tools=[` | 两个嵌套函数已经定义；`prepare_booking.__code__.co_freevars` 包含 `service`、`user_id`，闭包保存身份；返回后在 A2 看模型 schema 不含身份参数 |
+| A2 | [测试:136](../../tests/test_061_067_booking.py) `assert names == ...` | `names 含 prepare_booking、query_booking、query_bookings、list_booking_plans、check_booking_result，且没有执行工具`；没有下单、取消或修改审核工具 |
 | A3 | [agent.py:20](../../src/gogo_agent/booking/agent.py) `return Agent(...)`；Debug `test_061_booking_agent_is_assembled_with_policy_prompt` | 调用方传入 model、toolkit、state；返回对象名 `BookingAgent`，`max_iters=8`、模型重试 0 |
 | A4 | [测试:156](../../tests/test_061_067_booking.py) `assert book_w == set()`；Debug `test_061_writable_tools_are_disjoint_across_master_planning_and_booking_toolkits` | 预订工具全部只读；规划、管理工具面也没有 `book_flight` |
 
 这些测试验证装配与工具 schema，**没有调用 `Agent.reply()`，也不会命中 `prepare_booking` 函数体**。函数体的实际责任按代码顺序读：
 
-1. [tools.py:35](../../src/gogo_agent/booking/tools.py) 调 `service.check_ready`，执行门禁并生成摘要。
+1. [tools.py](../../src/gogo_agent/booking/tools.py) 调 `service.check_ready`，执行门禁并生成摘要。
 2. 门禁不满足时，返回对应 `errorCode`。
 3. 门禁满足时，仍返回 `success=false / errorCode=CONFIRMATION_REQUIRED`，附带 `data` 摘要；这是“等待确认”，没有下单。
 4. `query_booking` 调阶段 D 的 `get_booking`，只读当前用户的本地记录，不联系供应商。
 
-这也解释了为什么把提示词改成“直接帮用户订好”没有用：工具面根本没有下单入口。反过来，仅有 `confirmed=True` 这个参数也没有实现聊天的可信用户确认；它依赖未来的认证调用方正确传入。
+未确认轮次的工具面没有执行入口，改提示词也不能获得它；网页通过已保存摘要校验后，才注册无参数执行工具。内部 `confirmed=True` 来自该可信闭包，不接受模型自证。
 
 ## 6. 第四轮：取消顺序与跨用户隔离
 
@@ -208,7 +208,7 @@ PYTHONPATH=src .venv/bin/python scripts/demo_061_067_booking.py --case cancel
 
 | 步 | 断点与触发 | 变量与预期 | 下一步 |
 | --- | --- | --- | --- |
-| C1 | [service.py:275](../../src/gogo_agent/booking/service.py) `def cancel(...)` 的首条语句；第 1 次是航班 | 本人、已确认、记录状态 `CONFIRMED` | 调阶段 D `travel.cancel_booking` |
+| C1 | [service.py](../../src/gogo_agent/booking/service.py) `def cancel(...)` 的首条语句；第 1 次是航班 | 本人、已确认、记录状态 `CONFIRMED` | 调阶段 D `travel.cancel_booking` |
 | C2 | [travel/service.py:485](../../src/gogo_agent/travel/service.py) `self.booking_gateway.cancel(...)`；航班取消 | 供应商确认成功，`supplier_cancelled=True` | 随后本地状态变 `CANCELLED` 并写取消审计 |
 | C3 | [booking/service.py:287](../../src/gogo_agent/booking/service.py) `self._cancel_hotel_at_supplier(...)`；第 2 次是酒店 | 进入前酒店本地仍为 `CONFIRMED`，有供应商单号 | **先**取消酒店供应商订单，再进入阶段 D |
 | C4 | [booking/service.py:289](../../src/gogo_agent/booking/service.py) `result = self.travel.cancel_booking(...)` | 酒店供应商已确认取消 | 更新本地；外层补充供应商取消事实 |
@@ -264,22 +264,12 @@ PYTHONPATH=src .venv/bin/python scripts/demo_061_067_booking.py --case breaker
 
 ## 8. 与规划篇对照：前端、Java 和 Python 各到了哪里
 
-### 8.1 当前浏览器能说明什么
+### 8.1 当前网页链路
 
-若已经开着规划篇的练习前后端，可新建会话发送“请预订这个方案”，沿下面的静态路径观察。此路线会调用已配置的聊天模型，不属于上述离线验证；本次没有重新发起模型请求。
+使用[网页完整链路指南](预订Agent-网页完整链路调试.md)的隔离后端；不要向共享库运行练习写入。普通预订走 `POST /api/chat/{sessionId}`，GoGo 注册独立 `booking_agent`。BookingAgent 首先只读查询与校验，生成不向模型暴露 token 的待确认卡。网页收到 `message_id` 后，按钮才可提交独立的 `booking_confirmation_token` 字段。服务端复验身份、会话、计划版本、金额、审批与审核，才开放无参数执行工具并调用唯一 `BookingService.book`。
 
-| 顺序 | 断点或证据 | 当前实现应如何理解 |
-| --- | --- | --- |
-| U1 | [chat.ts:38](../../frontend/src/api/chat.ts) `sendChatMessageSSE` | 仍只发送通用 `POST /api/chat/{sessionId}`，body 是 `message`，没有专用预订调用 |
-| U2 | [rules.py:227](../../src/gogo_agent/intent/rules.py) `IntentRuleMatcher.match` | 新会话中该句 L1 命中 `booking`；离线规则调用已核验。短句“确认”需要历史，不等同于此句 |
-| U3 | [executor.py:287](../../src/gogo_agent/chat/executor.py) `has_manage = any(...)` | `BOOKING` 在 `MANAGE_INTENTS` 中，所以 `has_manage=True`，本句 `has_plan=False` |
-| U4 | [executor.py:355](../../src/gogo_agent/chat/executor.py) `name=self.MANAGE_TOOL_NAME` | 主 Agent 获得 `itinerary_manage_agent`；是否实际委派仍取决于模型。没有 `booking_agent` |
-| U5 | [travel/tools.py:259](../../src/gogo_agent/travel/tools.py) `request_booking_cancellation` | 即使模型选了取消请求工具，也只查归属并提示确认，不执行供应商取消 |
-| U6 | [ChatWindow.tsx:411](../../frontend/src/components/ChatWindow.tsx) `case 'booking_result':` | 前端具备消费能力；当前 Python 聊天服务没有这类事件生产路径，不能据此期待预订卡片 |
+`booking_confirmation` 与 `booking_result` 在助手回复保存后发送；前端沿同一个 timeline 展示和恢复确认、成功、失败、未知结果。模拟卡没有支付链接。自由文字“确认预订”不会自动授权写入；网页按钮与服务端门禁共同定义本次执行对象。
 
-前端 `BookingResultCard` 负责展示订单和支付链接，没有确认下单按钮；它的存在不证明 BookingAgent 已接线。`event: booking_result` 是 SSE 事件名，JSON 中写一个同名 `type` 字段也不能替代服务端发送事件。
-
-规划篇的 `extra.tool_calls`、`extra.timeline` 和模型日志用于检查真实聊天执行；本篇离线脚本没有 SSE、业务聊天消息或 AgentState 保存，所以看不到这些记录。反过来，聊天里出现“预订成功”的文字，也不能替代供应商结果与本地记录。
 
 ### 8.2 Java → Python 的责任对照
 
@@ -287,14 +277,14 @@ Java 基线根目录：`/Users/shenmingjie/workSpace/LLMentor-teach/gogo-agent`�
 
 | Java 实际入口 | 当前 Python 入口 | 相同点与差异 |
 | --- | --- | --- |
-| [MasterAgent.java:117](/Users/shenmingjie/workSpace/LLMentor-teach/gogo-agent/src/main/java/com/gogo/travel/agent/MasterAgent.java) 注册 `booking_agent` | [chat/executor.py:269](../../src/gogo_agent/chat/executor.py) `_build_agent` | Python 尚未注册预订子 Agent；当前 `booking` 意图进入管理 Agent |
-| [BookingAgent.java:61](/Users/shenmingjie/workSpace/LLMentor-teach/gogo-agent/src/main/java/com/gogo/travel/agent/BookingAgent.java) `build()`，注册工具、Skill 和 Hook | [booking/agent.py:18](../../src/gogo_agent/booking/agent.py) `build_booking_agent` | 都组装模型与工具；Python 标准工具集只有门禁与本地查询 |
+| [MasterAgent.java:117](/Users/shenmingjie/workSpace/LLMentor-teach/gogo-agent/src/main/java/com/gogo/travel/agent/MasterAgent.java) 注册 `booking_agent` | [chat/executor.py:269](../../src/gogo_agent/chat/executor.py) `_build_agent` | Python 已注册独立 booking_agent；写入只来自已验证的本轮网页确认 |
+| [BookingAgent.java:61](/Users/shenmingjie/workSpace/LLMentor-teach/gogo-agent/src/main/java/com/gogo/travel/agent/BookingAgent.java) `build()`，注册工具、Skill 和 Hook | [booking/agent.py:18](../../src/gogo_agent/booking/agent.py) `build_booking_agent` | 都组装模型与工具；Python 默认是门禁与查询；本轮可信网页确认后增加限定对象的执行工具 |
 | [BookingAgent.java:108](/Users/shenmingjie/workSpace/LLMentor-teach/gogo-agent/src/main/java/com/gogo/travel/agent/BookingAgent.java) 注册 `tuniu-cli`；[BookingPersistenceHook.java:104](/Users/shenmingjie/workSpace/LLMentor-teach/gogo-agent/src/main/java/com/gogo/travel/agent/hook/BookingPersistenceHook.java) `handlePostActing` 解析 shell 结果后保存 | [BookingService.book](../../src/gogo_agent/booking/service.py) → `_execute` → `SupplierGateway.create_order` | Python 先留 pending，再调模拟供应商，再保存确定结果；没有 Java 式下单 CLI 后置 Hook 路径 |
 | [BookingWriteTools.java:61](/Users/shenmingjie/workSpace/LLMentor-teach/gogo-agent/src/main/java/com/gogo/travel/agent/tools/BookingWriteTools.java) `cancelBooking` | [BookingService.cancel](../../src/gogo_agent/booking/service.py) → [TravelBusinessService.cancel_booking](../../src/gogo_agent/travel/service.py) | Python 酒店外层先取消供应商；阶段 D 直调的酒店分支仍只改内部状态 |
-| [BookingPersistenceHook.java:229](/Users/shenmingjie/workSpace/LLMentor-teach/gogo-agent/src/main/java/com/gogo/travel/agent/hook/BookingPersistenceHook.java) `emitBookingResult`，发送 `booking_result` | 前端保留同名事件消费分支 | Java 有静态生产链；当前 Python 没有对应发送，不能套用 Java 的页面完成标准 |
+| [BookingPersistenceHook.java:229](/Users/shenmingjie/workSpace/LLMentor-teach/gogo-agent/src/main/java/com/gogo/travel/agent/hook/BookingPersistenceHook.java) `emitBookingResult`，发送 `booking_result` | `_stream_prepared_turn` 保存后发送，前端同名事件消费 | Python 已生产三态结果事件并保存到历史时间轴；模拟供应商不代表真实订单 |
 | [TravelOrderService.java:51](/Users/shenmingjie/workSpace/LLMentor-teach/gogo-agent/src/main/java/com/gogo/travel/business/order/service/TravelOrderService.java) `createAndSubmit` | `TravelBusinessService.submit_order` | 创建差旅申请、提交审批；不是向供应商订机票或酒店 |
 
-Java 的确认与先检查审批主要依赖提示词及工具调用；Python 的 `_gate` 是服务端规则，但当前没有把聊天确认接到它。Java 当前模块未见与 Python 同责任的统一 `BookingService`，不要仅凭类名相似寻找逐行对应。
+Java 的确认与先检查审批主要依赖提示词及工具调用；Python 的 `_gate` 是服务端规则，网页已通过独立确认字段、签名摘要与无参数执行工具接入。Java 当前模块未见与 Python 同责任的统一 `BookingService`，不要仅凭类名相似寻找逐行对应。
 
 ### 8.3 本轮 Python 语法与生命周期
 
@@ -316,19 +306,19 @@ Java 的确认与先检查审批主要依赖提示词及工具调用；Python �
 | 计划、内容版本与审核 | `lab.plans` 的独立内存计划库 | 可读当前版本审核；不复用浏览器里之前生成的计划 |
 | 供应商请求与订单 | `lab.supplier.orders` 字典、调用计数 | 模拟外部事实；不证明真实航司、酒店行为 |
 | 预订记录 | 业务内存库 `booking_record` | pending、成功、失败、未知与取消状态；不表示付款成功 |
-| 业务审计 | `business_action_audit` | 差旅提交和阶段 D 取消有写入；当前 `BookingService.book` 没有写下单审计 |
+| 业务审计 | `business_action_audit` | 差旅提交与取消沿用原审计；预订追加 supplier_booking 状态事件，包含待处理、未知、成功或失败，同状态重放不重复 |
 | 聊天历史、AgentState、活跃路由 | 本脚本不保存 | 不能用脚本结果证明聊天续跑、SSE 卡片或历史回放生效 |
 
-不要由测试名 `...counted_and_audited` 推断每次下单都有审计：现有该测试主要断言调用次数和记录状态。本次额外只读检查显示，成功下单、响应丢失、拒绝场景的审计表都只有准备阶段的 `submit`。
+预订审计现在与本地状态同事务保存，并有状态、幂等、未知后对账及对回复保存失败的回归；审计记录不包含确认 token。
 
 当前需要保留的限制：
 
-- **跨版本未知单保护不足**：本次隔离复现中，旧版本下单返回 `UNKNOWN` 后，重新计算并审核生成新内容版本，再下同一去程会创建新键；创建次数从 1 变成 2、本地记录从 1 变成 2。代码只拦已有 `CONFIRMED` 的同差旅单同段记录。不要通过改版本或换键处理未知订单。
-- **未证明并发下单唯一**：唯一键可拒绝冲突插入，但当前测试未覆盖并发竞争；无跨供应商调用的锁，不能宣称完整的 exactly-once。
+- **跨版本保护**：旧未知/处理中订单占用同差旅单同一行程段，换版本、换计划或换标签均不能再次创建；应先核实原订单。
+- **并发边界**：已验证单进程并发相同确认只创建一次，并用进程内锁串行化门禁和供应商调用；尚未实现多进程锁，不能宣称跨 worker 的 exactly-once。
 - **一次只预订一段**：去程、酒店、返程分别调用；部分成功后没有整单原子回滚或自动补偿。
-- **未知结果无后台恢复**：同键调用时只读对账；没有定时对账或供应商回调。当前也未校验供应商返回的请求 ID、金额、币种是否与本地请求一致。
+- **未知结果无后台恢复**：同键调用或 check_booking_result 手动只读对账；没有定时对账或供应商回调。当前也未校验供应商返回的请求 ID、金额、币种是否与本地请求一致。
 - **酒店取消审计有差异**：外层返回供应商已取消，但阶段 D 审计快照中的 `supplier_cancelled` 仍可能为 `false`；不能拿其中一份替代完整核验。
-- **当前验证环境有限**：仅 SQLite、模拟供应商、固定评估器；未运行真实途牛、MySQL、支付、Java 服务或 BookingAgent 模型推理。聊天接线与结构化确认也不在本次实现范围内。
+- **当前验证环境有限**：组件练习使用 SQLite、模拟供应商、固定评估器；完整链另运行真实 SDK 的主子 Agent 与固定模型，已包含聊天确认。真实途牛、支付、在线模型质量及多 worker 未验收。
 
 这些是学习时需要解释的现状，不是要求你在本轮自行补齐的功能。继续后续阶段前，按学习路线核对阶段出口，不能把模拟供应商验收等同于生产闭环。
 
@@ -346,8 +336,8 @@ PYTHONPATH=src .venv/bin/python -m pytest tests/test_061_067_booking.py -q --tb=
 1. **为什么 `prepare_booking` 成功检查后还返回 `CONFIRMATION_REQUIRED`？** 因为它只准备摘要，没有执行购买权限。
 2. **`book` 调三次，为什么供应商只创建一次？** 第一次未确认被拒绝；第二次创建；第三次门禁通过后命中同键已有记录。
 3. **`UNKNOWN` 为什么不能当 `FAILED`？** 异常不能证明供应商没建单；应查询事实，同键不重新创建。
-4. **旧审核、旧内容版本、旧确认单分别在哪挡住请求？** `_gate` 校验当前审核；业务键包含内容版本；跨版本同段已有确认单由 `_confirmed_leg_exists` 拦截。
-5. **为什么浏览器里找不到预订 Agent，也不出现预订结果卡片？** 当前聊天没有注册该 Agent，也没有发送对应结果事件；前端消费代码的存在不等于接线完成。
+4. **旧审核、旧内容版本、旧确认单分别在哪挡住请求？** `_gate` 校验当前审核；业务键包含内容版本；跨版本同段已有确认单由 `_check_booking_slot` 拦截。
+5. **为什么浏览器里找不到预订 Agent，也不出现预订结果卡片？** 请使用新增网页完整链脚本；当前已接入独立 Agent、确认卡与结果事件。组件脚本本身仍不启动网页。
 6. **酒店取消失败为什么本地仍应是 `CONFIRMED`？** 外层先要供应商确认，成功后才更新本地；阶段 D 直调酒店取消是不同路径。
 
 能亲自复现成功、同键重复、两种响应丢失和跨用户拒绝，并区分**模拟供应商事实、本地预订、审计、聊天记忆**，就完成了本篇的学习目标。

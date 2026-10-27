@@ -40,29 +40,36 @@ function BizIcon({ bizType }: { bizType: BookingResult['bizType'] }) {
 }
 
 /**
- * 预订下单成功卡片：展示订单号、标题、金额，并提供“立即支付”按钮跳转支付链接。
- * 支付链接缺失时按钮不可用，仅展示订单信息。
+ * 按服务端三态显示模拟预订事实和查询标识，不提供真实支付入口。
  */
-export default function BookingResultCard({ data }: { data: BookingResult }) {
-  const hasPayUrl = !!(data.payUrl && data.payUrl.trim());
+export default function BookingResultCard({ data, onCheck, busy }: { data: BookingResult; onCheck?: (bookingId: string) => void; busy?: boolean }) {
+  if (!data || !['CONFIRMED', 'FAILED', 'UNKNOWN'].includes(data.resolution)
+    || typeof data.startTime !== 'string' || typeof data.endTime !== 'string') {
+    return <section className="booking-card"><p className="booking-notice" role="alert">历史预订结果格式不完整，请到“我的差旅”查询本人记录。</p></section>;
+  }
+  const bookingId = data.bookingId;
+  const confirmed = data.resolution === 'CONFIRMED';
+  const heading = confirmed ? '模拟预订已确认' : data.resolution === 'UNKNOWN' ? '预订结果待核实' : '预订未完成';
   const currencySymbol = data.currency === 'USD' ? '$' : '¥';
 
   return (
-    <div className="booking-card">
+    <section className={`booking-card booking-result-${data.resolution.toLowerCase()}`} aria-label={heading}>
       <div className="booking-card-header">
         <span className="booking-card-icon">
           <BizIcon bizType={data.bizType} />
         </span>
         <div className="booking-card-heading">
-          <span className="booking-card-type">{data.bizTypeLabel || '预订'}下单成功</span>
+          <span className="booking-card-type">{heading}</span>
           {data.title && <span className="booking-card-title">{data.title}</span>}
         </div>
-        <span className="booking-card-status">{data.statusLabel || '待支付'}</span>
+        <span className="booking-card-status">{data.statusLabel}</span>
       </div>
 
       <div className="booking-card-body">
+        <div className="booking-card-row"><span className="booking-card-label">行程</span><span>{data.route}</span></div>
+        <div className="booking-card-row"><span className="booking-card-label">时间</span><span>{data.startTime.replace('T', ' ')} 至 {data.endTime.replace('T', ' ')}</span></div>
         <div className="booking-card-row">
-          <span className="booking-card-label">订单号</span>
+          <span className="booking-card-label">{confirmed ? '模拟订单号' : '查询标识'}</span>
           <span className="booking-card-value order-no">{data.orderId}</span>
         </div>
         {data.amount && (
@@ -77,19 +84,11 @@ export default function BookingResultCard({ data }: { data: BookingResult }) {
       </div>
 
       <div className="booking-card-footer">
-        {hasPayUrl ? (
-          <a
-            className="booking-card-pay-btn"
-            href={data.payUrl!}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            立即支付
-          </a>
-        ) : (
-          <span className="booking-card-pay-btn disabled">支付链接暂不可用</span>
+        <p className="booking-notice" role="status">{data.detail}<br />模拟供应商，不实际出票、订房或扣款。{data.resolution === 'UNKNOWN' && '请保留查询标识，不要换方案重复下单。'}</p>
+        {data.resolution === 'UNKNOWN' && bookingId && onCheck && (
+          <button type="button" className="booking-card-pay-btn" disabled={busy} onClick={() => onCheck(bookingId)}>核实原预订</button>
         )}
       </div>
-    </div>
+    </section>
   );
 }

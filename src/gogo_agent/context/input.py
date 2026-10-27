@@ -18,7 +18,7 @@ from agentscope.middleware import MiddlewareBase
 from gogo_agent.request_context import RequestContext
 
 logger = logging.getLogger("uvicorn.error")
-PROMPT_VERSION = "gogo-prompts-2026-10-25.1"
+PROMPT_VERSION = "gogo-prompts-2026-10-25.2"
 TURN_MARKER = "\n<本轮路由>\n"
 # 只读且不含确认令牌的已注册工具。失败回执永不折叠。
 DEDUP_TOOLS = frozenset({"get_plan", "get_candidates", "query_travel_policy", "query_travel_orders"})

@@ -1,5 +1,7 @@
 """FastAPI router for chat conversation, message history, feedback, and execution endpoints."""
 
+import json
+
 from typing import Optional
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -66,19 +68,24 @@ async def send_chat_message(
     并持久化助手回复。默认以 text/event-stream (SSE) 输出以适配前端；若客户端指定
     Accept: application/json 则以结构化 JSON 返回。
     """
+    booking_args = {"booking_confirmation_token": req.booking_confirmation_token} if req.booking_confirmation_token is not None else {}
     accept_header = request.headers.get("accept", "")
     if "application/json" in accept_header and "text/event-stream" not in accept_header:
         reply_text, msg_id = await executor.execute_turn(
             session_id=sessionId,
             user_id=current_user.user_id,
-            message=req.message,
+            message=req.message, **booking_args,
         )
-        return ChatJSONResponse(sessionId=sessionId, messageId=msg_id, content=reply_text)
+        saved = executor.history_service.repository.find_message_by_id(msg_id)
+        extra = json.loads(saved.extra or "{}") if saved is not None else {}
+        structured = [item for item in extra.get("timeline", []) if item.get("kind") in {"booking_confirmation", "booking"}]
+        return ChatJSONResponse(sessionId=sessionId, messageId=msg_id, content=reply_text,
+                                timeline=structured or None).model_dump(exclude_none=True)
 
     stream = await executor.stream_turn_sse(
         session_id=sessionId,
         user_id=current_user.user_id,
-        message=req.message,
+        message=req.message, **booking_args,
     )
     return StreamingResponse(stream, media_type="text/event-stream")
 

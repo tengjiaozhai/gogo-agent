@@ -1,5 +1,5 @@
 {
-  "version": "gogo-prompts-2026-10-25.1",
+  "version": "gogo-prompts-2026-10-25.2",
   "boundary": "已识别意图到实际工具注册的固定回归，不是模型理解准确率评测",
   "cases": [
     {
@@ -54,10 +54,10 @@
         "booking"
       ],
       "tools": [
-        "itinerary_manage_agent"
+        "booking_agent"
       ],
-      "expected_answer_behavior": "说明当前聊天无法新建供应商预订，可查询本人已有记录",
-      "forbidden_behavior": "不得把管理工具当供应商下单工具",
+      "expected_answer_behavior": "委派独立BookingAgent，先校验审批与审核，再展示待确认卡；网页明确确认后执行模拟预订",
+      "forbidden_behavior": "不得把自由文字或模型布尔值当确认，不得实际出票或把未知结果说成成功",
       "real_model_result": "unverified"
     },
     {

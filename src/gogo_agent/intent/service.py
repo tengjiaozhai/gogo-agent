@@ -81,15 +81,31 @@ class ModelOutputError(ValueError):
     """单次模型响应不是可接受的结构化结果，不进行文本兜底或修复重试。"""
 
 
-def create_text_model(credential: OpenAICredential, model_name: str) -> OpenAIChatModel:
-    """创建与项目网关一致的文本模型，关闭 AgentScope 与底层 SDK 的两层重试。"""
+def create_text_model(
+    credential: OpenAICredential,
+    model_name: str,
+    *,
+    timeout_seconds: float = 60,
+    disable_thinking: bool = False,
+) -> OpenAIChatModel:
+    """创建与项目网关一致的文本模型，关闭 AgentScope 与底层 SDK 的两层重试。
+
+    超时由调用方注入：本函数不读环境变量，见 010-011 契约。
+    disable_thinking 只给纯分类场景：思考链对分类无增益，却把 p95 从 2.3s 推到 10.4s
+    （同网关 26 用例 × 3 次实测），对生成式改写必须保留。
+    """
+    if isinstance(timeout_seconds, bool) or timeout_seconds <= 0:
+        raise ValueError("timeout_seconds 必须是正数秒数")
+    if not isinstance(disable_thinking, bool):
+        raise TypeError("disable_thinking 必须是 bool")
     return create_chat_model(
         credential,
         model_name,
         role="intent",
         parameters=OpenAIChatModel.Parameters(temperature=0, thinking_enable=False),
         stream=False,
-        timeout_seconds=60,
+        timeout_seconds=timeout_seconds,
+        extra_body={"thinking": {"type": "disabled"}} if disable_thinking else None,
     )
 
 
@@ -132,6 +148,38 @@ async def _generate(
         raise ModelOutputError(f"模型输出不符合 {result_type.__name__} JSON 契约") from None
 
 
+_RELATIVE_DATE_WORDS = (("大后天", 3), ("后天", 2), ("明天", 1), ("今天", 0))
+
+
+def _anchor_relative_dates(context: RewriteContext, result: RewriteResult) -> RewriteResult:
+    """相对日期是确定性计算，由服务端兜底：漏算直接补全，算错仍然拒绝。
+
+    原文出现相对日期词时，改写结果必须落到服务端参考日期推出的绝对日期上：
+    残留原词视为漏算，就地把该词换成正确日期；既无原词也无正确日期视为算错，
+    属静默错误中的高危项（会把行程订到错误的日期），维持拒绝而不是猜测修正。
+    """
+    text = result.rewritten_question
+    if text is None:
+        return result
+    original = context.query.question
+    for word, offset in _RELATIVE_DATE_WORDS:
+        if word not in original:
+            continue
+        day = context.reference_date + timedelta(days=offset)
+        forms = (
+            day.isoformat(),
+            f"{day.year}年{day.month}月{day.day}日",
+            f"{day.month}月{day.day}日",
+        )
+        if word in text:
+            text = text.replace(word, day.isoformat(), 1)
+        elif not any(form in text for form in forms):
+            raise ModelOutputError("改写结果中的相对日期未按服务端参考日期解释")
+    if text == result.rewritten_question:
+        return result
+    return result.model_copy(update={"rewritten_question": text})
+
+
 class QueryRewriter:
     """通过一次独立模型调用，融合跨轮历史并返回 008 改写契约。"""
 
@@ -139,16 +187,9 @@ class QueryRewriter:
         self._model = model
 
     async def rewrite(self, context: RewriteContext) -> RewriteResult:
-        tomorrow = context.reference_date + timedelta(days=1)
-        result = await _generate(self._model, _REWRITE_INSTRUCTIONS, context, RewriteResult)
-        if "明天" in context.query.question and result.rewritten_question is not None:
-            date_forms = (
-                tomorrow.isoformat(),
-                f"{tomorrow.year}年{tomorrow.month}月{tomorrow.day}日",
-                f"{tomorrow.month}月{tomorrow.day}日",
-            )
-            if not any(form in result.rewritten_question for form in date_forms):
-                raise ModelOutputError("改写结果中的‘明天’未按服务端参考日期解释")
+        result = _anchor_relative_dates(
+            context, await _generate(self._model, _REWRITE_INSTRUCTIONS, context, RewriteResult),
+        )
         if result.rewritten_question is not None:
             affirmative = _affirmative_text(context.query.question)
             if requires_action_context(affirmative) and requires_action_context(result.rewritten_question):

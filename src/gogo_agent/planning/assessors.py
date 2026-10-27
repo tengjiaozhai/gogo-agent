@@ -20,8 +20,11 @@ from gogo_agent.context.input import PROMPT_VERSION
 from .models import ReviewIssue, ReviewResult, ReviewSource, ReviewVerdict
 from .review import Itinerary
 
-ASSESSOR_TIMEOUT_SECONDS = 20.0
-MAX_OUTPUT_TOKENS = 400
+# 20 秒对推理模型偏紧：实测单次最长 14.5 秒，留出网关抖动余量。外层 review 仍有 30 秒总闸。
+ASSESSOR_TIMEOUT_SECONDS = 25.0
+# 400 会被思考链吃光，导致正文为空、被当成「主观评估不可用」。正文只需 200 token 左右，
+# 余量全部留给 thinking。网关按 32k 封顶；再大也不会报错，只是被静默夹到实际容量。
+MAX_OUTPUT_TOKENS = 32768
 
 
 class AssessmentOutput(BaseModel):
@@ -122,7 +125,14 @@ def _completed_text(response: object) -> str:
         raise ValueError("模型回复未正常结束")
     if any(isinstance(block, ToolCallBlock) for block in response.content):
         raise ValueError("主观评估不允许工具调用")
-    return "".join(block.text for block in response.content if isinstance(block, TextBlock))
+    text = "".join(block.text for block in response.content if isinstance(block, TextBlock))
+    # 推理模型的输出预算被 thinking 吃光时，finished_reason 仍是 completed、正文却是空串；
+    # 不在这里拦住，就会以 pydantic ValidationError 的形式冒出去，掩盖真正的原因。
+    if not text.strip():
+        thinking = sum(len(getattr(block, "thinking", "") or "") for block in response.content
+                       if type(block).__name__ == "ThinkingBlock")
+        raise ValueError(f"模型只输出了思考、没有正文（thinking {thinking} 字符），请提高输出预算后重试")
+    return text
 
 
 def build_model_assessors(model: ChatModelBase) -> Sequence[ModelSubjectiveAssessor]:

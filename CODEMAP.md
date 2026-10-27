@@ -26,6 +26,7 @@
 - [`frontend/tsconfig.json`](frontend/tsconfig.json) — 组织前端 TypeScript 项目引用。
 - [`frontend/tsconfig.node.json`](frontend/tsconfig.node.json) — 配置 Vite 运行配置的 TypeScript 检查。
 - [`frontend/vite.config.ts`](frontend/vite.config.ts) — 启用 React 并将开发期 `/api` 代理到 Python 服务。
+- [`frontend/tests/booking-cards.test.mjs`](frontend/tests/booking-cards.test.mjs) — 验证模拟确认卡的可操作条件、凭据不入 DOM 及三态结果文案。
 - [`frontend/tests/reply-state.test.ts`](frontend/tests/reply-state.test.ts) — 验证消息保存确认、失败摘要、迟到事件与跨会话状态隔离。
 
 ## frontend/public
@@ -53,7 +54,8 @@
 
 - [`frontend/src/components/AgentMessageBlock.tsx`](frontend/src/components/AgentMessageBlock.tsx) — 渲染思考、主子委派、可展开工具详情、执行状态及 Markdown 回复与反馈。
 - [`frontend/src/components/AdminApprovalPage.tsx`](frontend/src/components/AdminApprovalPage.tsx) — 提供管理员审批筛选、详情、备注、同意和拒绝页面。
-- [`frontend/src/components/BookingResultCard.tsx`](frontend/src/components/BookingResultCard.tsx) — 定义后续预订结果卡片展示。
+- [`frontend/src/components/BookingConfirmationCard.tsx`](frontend/src/components/BookingConfirmationCard.tsx) — 展示本人待确认的项目、日期与金额，并在摘要已保存且有效时提交明确确认。
+- [`frontend/src/components/BookingResultCard.tsx`](frontend/src/components/BookingResultCard.tsx) — 展示服务端模拟预订的已确认、失败与未知结果，不提供真实支付入口。
 - [`frontend/src/components/ChatWindow.tsx`](frontend/src/components/ChatWindow.tsx) — 连接聊天 SSE、执行事件与历史时间轴，处理反馈并在离开页面时终止旧流。
 - [`frontend/src/components/LoginPage.tsx`](frontend/src/components/LoginPage.tsx) — 登录并加载服务端用户身份。
 - [`frontend/src/components/MyTravelPage.tsx`](frontend/src/components/MyTravelPage.tsx) — 提供本人差旅列表、审批历史、预订记录和确认后的申请、修改、取消操作。
@@ -157,7 +159,7 @@
 - [`src/gogo_agent/planning/steps.py`](src/gogo_agent/planning/steps.py) — 维护 Plan-and-Execute 步骤状态、失败次数、条件变化失效与已确认写入去重。
 - [`src/gogo_agent/planning/review.py`](src/gogo_agent/planning/review.py) — 执行客观六维审核、有限次主观评估、确定性仲裁，并把结论绑定计划内容版本。
 - [`src/gogo_agent/planning/service.py`](src/gogo_agent/planning/service.py) — 编排计划创建、搜索、计算、审核与版本递增，所有操作限定于本人计划。
-- [`src/gogo_agent/planning/store.py`](src/gogo_agent/planning/store.py) — 以用户与计划标识隔离保存计划快照，并用版本号拒绝并发覆盖。
+- [`src/gogo_agent/planning/store.py`](src/gogo_agent/planning/store.py) — 以用户与计划标识隔离保存计划快照，用版本号拒绝并发覆盖，并以 `session_id` 普通列支持按聊天会话列计划。
 - [`src/gogo_agent/planning/tools.py`](src/gogo_agent/planning/tools.py) — 为规划智能体装配只读候选、计算、审核工具，身份只来自服务端上下文。
 - [`src/gogo_agent/planning/agent.py`](src/gogo_agent/planning/agent.py) — 组装行程规划 Agent 与其系统提示词，不包含差旅单写入或供应商下单工具。
 - [`src/gogo_agent/planning/simulated.py`](src/gogo_agent/planning/simulated.py) — 提供固定模拟候选、模拟政策与确定性主观评估替身，仅用于练习和测试。
@@ -168,11 +170,14 @@
 ## src/gogo_agent/booking
 
 - [`src/gogo_agent/booking/__init__.py`](src/gogo_agent/booking/__init__.py) — 标记阶段 F 预订与工具可靠性包。
-- [`src/gogo_agent/booking/service.py`](src/gogo_agent/booking/service.py) — 作为唯一下单入口，执行审核、差旅审批、同行程段唯一与幂等门禁，并处理未知结果与酒店取消顺序。
+- [`src/gogo_agent/booking/service.py`](src/gogo_agent/booking/service.py) — 作为唯一下单入口，执行审核、差旅审批、同行程段唯一与幂等门禁，并原子记录业务状态审计、处理未知结果与酒店取消顺序。
 - [`src/gogo_agent/booking/supplier.py`](src/gogo_agent/booking/supplier.py) — 定义供应商下单、查询与取消接口，提供可脚本化的模拟供应商和接入阶段 D 取消的适配器。
 - [`src/gogo_agent/booking/reliability.py`](src/gogo_agent/booking/reliability.py) — 提供只读重试、写入不重试、有界并行搜索与按工具名套用的熔断状态机。
-- [`src/gogo_agent/booking/tools.py`](src/gogo_agent/booking/tools.py) — 为预订 Agent 装配门禁检查与只读查询工具，不包含下单或取消工具。
-- [`src/gogo_agent/booking/agent.py`](src/gogo_agent/booking/agent.py) — 组装预订 Agent 与其系统提示词，限定其不能自行下单或修改审核结论。
+- [`src/gogo_agent/booking/tools.py`](src/gogo_agent/booking/tools.py) — 按本轮可信确认装配预订门禁、查询和限定对象的模拟执行工具。
+- [`src/gogo_agent/booking/agent.py`](src/gogo_agent/booking/agent.py) — 组装独立预订 Agent，限定执行依赖网页可信确认且不能修改审核结论。
+
+- [`src/gogo_agent/booking/chat.py`](src/gogo_agent/booking/chat.py) — 验证已保存的预订确认摘要、收集真实业务结果并生成可回放事件与事实正文。
+- [`src/gogo_agent/booking/dependencies.py`](src/gogo_agent/booking/dependencies.py) — 为网页聊天组合唯一预订服务和进程共享的模拟供应商。
 
 ## src/gogo_agent/integrations
 
@@ -239,6 +244,8 @@
 - [`docs/契约样例/阶段G-068-085-调试指南.md`](docs/契约样例/阶段G-068-085-调试指南.md) — 提供提示词、上下文、修订上限、候选引用和长期偏好的 Java/Python 对照、离线逐步调试与验收边界。
 - [`docs/契约样例/阶段G-固定回归.json`](docs/契约样例/阶段G-固定回归.json) — 保存八条问答期望、禁止行为和已识别意图到实际工具注册的固定边界样例。
 
+- [`docs/契约样例/预订Agent-网页完整链路调试.md`](docs/契约样例/预订Agent-网页完整链路调试.md) — 提供网页预订的离线服务、确认契约、Java/Python 对照、逐断点练习与验证边界。
+
 ## docs/架构
 
 - [`docs/架构/003-整体架构与HTTP入口.md`](docs/架构/003-整体架构与HTTP入口.md) — 记录 Java 请求链、Python 目标调用图、HTTP 入口取舍及 Java→Python 接口映射。
@@ -265,6 +272,8 @@
 - [`docs/research/agentscope-2.0.8-context-evaluation.md`](docs/research/agentscope-2.0.8-context-evaluation.md) — 对照 AgentScope Python 2.0.8 与项目的身份传递、改写历史和 Agent 状态管理边界。
 - [`docs/research/python-3.14-compatibility-assessment.md`](docs/research/python-3.14-compatibility-assessment.md) — 评估 Python 3.14 稳定性及对阶段 A 至阶段 I 实施的潜在兼容性影响。
 - [`docs/research/issue-compute-plan-参数契约缺失.md`](docs/research/issue-compute-plan-参数契约缺失.md) — 记录 compute_plan 参数契约缺失缺陷的根因、责任归属、修复内容与验收结果。
+- [`docs/research/issue-预订Agent三项能力缺口与接入方案.md`](docs/research/issue-预订Agent三项能力缺口与接入方案.md) — 对照 Java 基线评估真实供应商、支付链路、用户信息与密钥三项缺口的接入面、阻塞点与分步方案。
+- [`docs/research/长期记忆复刻方案-ReMe.md`](docs/research/长期记忆复刻方案-ReMe.md) — 对照 Java 百炼长期记忆的五项职责，给出 Python 用 ReMe 复刻的三套方案、跨用户隔离缺陷实测与服务器部署边界。
 
 ## docs/迁移
 
@@ -296,6 +305,7 @@
 - [`scripts/init_stage_d_test_db.py`](scripts/init_stage_d_test_db.py) — 仅在隔离 SQLite 中创建阶段 D 业务表并展示建表前后结果。
 - [`scripts/migrate_stage_d_tables.py`](scripts/migrate_stage_d_tables.py) — 预检并显式创建 `.env` MySQL 中缺失的阶段 D 项目表，核验项目字段注释与关键唯一约束。
 - [`scripts/migrate_agent_state_mediumtext.py`](scripts/migrate_agent_state_mediumtext.py) — 预检并显式扩容 MySQL/MariaDB 的 AgentState 存储列，保留既有列属性并验证迁移结果。
+- [`scripts/migrate_itinerary_plan_session.py`](scripts/migrate_itinerary_plan_session.py) — 预检并显式给 `itinerary_plan` 增加会话列与索引，按 AgentState 证据回填历史行，冲突或缺失保持空值。
 - [`scripts/prepare_stage_d_browser_lab.py`](scripts/prepare_stage_d_browser_lab.py) — 创建不接触 `.env` 数据库的临时 SQLite、测试账号职级与模拟预订，供浏览器调试。
 - [`scripts/prepare_stage_e_browser_lab.py`](scripts/prepare_stage_e_browser_lab.py) — 创建含用户级途牛 Key 表的阶段 E 练习库、3 个账号、假途牛命令与保密变量文件，供前端触发规划 Agent 调试。
 - [`scripts/demo_029_040_stage_d.py`](scripts/demo_029_040_stage_d.py) — 用离线模型、真实管理 Toolkit 与隔离数据库逐项演示 029–040 分支。
@@ -310,6 +320,8 @@
 - [`scripts/fake_weather_mcp_server.py`](scripts/fake_weather_mcp_server.py) — 用 FastMCP 提供 stdio 天气 forecast 工具，可按环境变量模拟工具错误、坏响应、崩溃与挂起。
 
 - [`scripts/demo_068_085_context.py`](scripts/demo_068_085_context.py) — 用真实 SDK、隔离计划与偏好存储演示路由、稳定前缀、无损输入压缩、有限修订和候选引用，并用 `qa` 对照旧/新提示词的问答级首轮表现（默认 dry-run）。
+
+- [`scripts/demo_booking_chat.py`](scripts/demo_booking_chat.py) — 用固定模型、真实认证与 SDK、隔离 SQLite 和模拟供应商演示网页预订确认与结果回放。
 
 ## output
 
@@ -328,6 +340,7 @@
 - [`tests/test_delegation_retry.py`](tests/test_delegation_retry.py) — 验证显式委派重试、原参数复用、令牌状态保存及未恢复失败的 JSON/SSE 出口。
 - [`tests/test_agent_state_storage.py`](tests/test_agent_state_storage.py) — 验证 AgentState 方言类型、旧表扩容与幂等，以及隔离 MySQL/MariaDB 中超过 64 KiB 状态的读回和 JSON/SSE 保存。
 - [`tests/test_068_085_context.py`](tests/test_068_085_context.py) — 验证真实 SDK 输入转换、结构化失败、两轮修订、候选隔离过期及显式偏好的认证和撤回。
+- [`tests/test_booking_chat.py`](tests/test_booking_chat.py) — 验证网页预订的认证确认、实际主子委派、门禁、幂等、失败恢复、未知结果与历史回放。
 - [`tests/test_001.py`](tests/test_001.py) — 验证 001 配置、日期工具、HTTP 健康检查及模拟模型网关调用链。
 - [`tests/test_004_auth.py`](tests/test_004_auth.py) — 验证 004 登录、登出、用户信息隔离、401 拦截与密码哈希自动迁移。
 - [`tests/test_005_chat.py`](tests/test_005_chat.py) — 隔离意图模型后验证会话持久化、AgentState 恢复、用户隔离和 SSE 输出。

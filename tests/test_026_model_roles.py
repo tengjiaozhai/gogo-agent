@@ -92,9 +92,12 @@ async def test_request_pipeline_uses_stable_model_without_network(monkeypatch):
     async with intent_runtime.open_intent_pipeline(history) as pipeline:
         rewrite_model = pipeline._rewriter._model
         recognize_model = pipeline._recognizer._model
-        assert rewrite_model is recognize_model
-        assert rewrite_model.model == "stable-026"
-        assert rewrite_model.role == "intent"
+        # 改写与分类各持一个实例：同名同角色，但分类侧显式关闭思考以换取延迟。
+        assert rewrite_model is not recognize_model
+        assert rewrite_model.model == recognize_model.model == "stable-026"
+        assert rewrite_model.role == recognize_model.role == "intent"
+        assert rewrite_model.extra_body is None
+        assert recognize_model.extra_body == {"thinking": {"type": "disabled"}}
 
 
 @pytest.mark.asyncio

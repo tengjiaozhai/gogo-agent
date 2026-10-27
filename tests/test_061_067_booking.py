@@ -133,9 +133,50 @@ def test_061_planning_and_review_never_book(stack: Stack):
 def test_061_booking_toolkit_has_no_writable_tool_and_no_plan_or_review_mutation(stack: Stack):
     toolkit = build_booking_toolkit(stack.service, RequestContext(user_id="u001", session_id="s", request_id="r"))
     names = {item["function"]["name"] for item in run(toolkit.get_tool_schemas())}
-    assert names == {"prepare_booking", "query_booking"}
+    assert names == {"resolve_plan", "prepare_booking", "query_booking", "query_bookings",
+                     "list_booking_plans", "check_booking_result"}
     for item in run(toolkit.get_tool_schemas()):
         assert "user_id" not in item["function"]["parameters"]["properties"]
+
+
+async def call_tool(toolkit, name: str, arguments: dict) -> dict:
+    """按模型视角调用一个只读工具，返回解析后的 JSON 回执。"""
+    tool = await toolkit.get_tool(name)
+    response = await tool.call(**arguments)
+    text = "".join(getattr(block, "text", "") for block in response.content)
+    return json.loads(text)
+
+
+def test_065_resolve_plan_turns_an_order_id_into_the_plan_id_users_never_remember(stack: Stack):
+    """用户只报差旅单号；resolve_plan 必须把它换算成计划标识，否则模型只能猜。"""
+    order_id = approved_order(stack)
+    plan_id = ready_plan(stack, order_id)
+    names = {item["function"]["name"] for item in run(
+        build_booking_toolkit(stack.service, RequestContext(user_id="u001", session_id="s", request_id="r")).get_tool_schemas())}
+    assert "resolve_plan" in names
+
+    toolkit = build_booking_toolkit(stack.service, RequestContext(user_id="u001", session_id="s", request_id="r"))
+    resolved = run(call_tool(toolkit, "resolve_plan", {"reference": order_id}))
+    assert resolved["success"] is True
+    assert resolved["data"]["resolved_by"] == "order_id"
+    assert [item["plan_id"] for item in resolved["data"]["plans"]] == [plan_id]
+
+    # 计划标识同样可解析，来源标记不同；不存在或空输入给出可执行错误。
+    assert run(call_tool(toolkit, "resolve_plan", {"reference": plan_id}))["data"]["resolved_by"] == "plan_id"
+    assert run(call_tool(toolkit, "resolve_plan", {"reference": "to_不存在"}))["errorCode"] == "ORDER_HAS_NO_PLAN"
+    assert run(call_tool(toolkit, "resolve_plan", {"reference": ""}))["errorCode"] == "NEEDS_INPUT"
+
+
+def test_065_order_id_widely_copied_into_plan_id_is_rejected_with_actionable_code(stack: Stack):
+    """把差旅单号当 plan_id 传时必须报 INVALID_PLAN_REFERENCE，而不是含糊的 PLAN_NOT_FOUND。"""
+    _, plan_id, order_id = ready_stack()
+    ctx = RequestContext(user_id="u001", session_id="s", request_id="r")
+    body = run(call_tool(build_booking_toolkit(stack.service, ctx), "prepare_booking",
+                         {"plan_id": order_id, "proposal_tag": "综合最佳", "leg": "hotel"}))
+    assert body["errorCode"] == "INVALID_PLAN_REFERENCE"
+    assert "resolve_plan" in body["message"]
+    assert stack.supplier.create_calls == 0
+    assert plan_id  # 正确标识本身可用，只是不能被单号替代
 
 
 def test_061_writable_tools_are_disjoint_across_master_planning_and_booking_toolkits(stack: Stack):

@@ -150,7 +150,7 @@ def test_044_tool_and_direct_calculation_agree_and_model_cannot_inject_user():
     toolkit = build_plan_toolkit(service, ctx(), search_provider=simulated_provider, assessors=[])
     schema_names = {item["function"]["name"] for item in run(toolkit.get_tool_schemas())}
     assert {"create_plan", "search_candidates", "compute_plan", "get_plan", "review_plan"} <= schema_names
-    assert not any("order" in name or "book" in name or "cancel" in name for name in schema_names)
+    assert not any("book" in name or "cancel" in name or "submit" in name for name in schema_names)
     for item in run(toolkit.get_tool_schemas()):
         assert "user_id" not in item["function"]["parameters"]["properties"]
 

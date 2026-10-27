@@ -344,6 +344,7 @@ class PlanView(BaseModel):
     version: int = Field(..., ge=1, description="保存版本；每次成功保存递增，用于乐观并发控制")
     content_version: int = Field(..., ge=1, description="内容版本；条件、候选或方案变化时递增，审核绑定此版本")
     order_id: str | None = Field(default=None, description="关联的本人差旅单标识，只保存引用")
+    session_id: str | None = Field(default=None, description="创建计划的聊天会话标识，由服务端注入；独立脚本计划可为空")
     conditions: PlanConditions = Field(..., description="当前规划条件")
     progress: PlanProgress = Field(..., description="步骤进度")
     candidates: CandidateSet | None = Field(default=None, description="当前候选；未搜索或已失效时为空")

@@ -17,12 +17,13 @@ from gogo_agent.security.masking import SensitiveMasker
 
 
 AGENT_LABELS = {
+    "BookingAgent": "预订执行智能体",
     "GoGo": "GoGo 主智能体", "InfoAgent": "信息查询智能体",
     "ItineraryManageAgent": "差旅管理智能体", "ItineraryPlanAgent": "行程规划智能体",
 }
 CHILD_TOOLS = {
     "info_agent": "InfoAgent", "itinerary_manage_agent": "ItineraryManageAgent",
-    "itinerary_plan_agent": "ItineraryPlanAgent",
+    "itinerary_plan_agent": "ItineraryPlanAgent", "booking_agent": "BookingAgent",
 }
 
 

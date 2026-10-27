@@ -30,9 +30,12 @@ function authHeaders(): Record<string, string> {
   return token ? { Authorization: token } : {};
 }
 
-function requireOk(response: Response): void {
+async function requireOk(response: Response): Promise<void> {
   if (response.status === 401) throw new Error('UNAUTHORIZED');
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(typeof body?.detail === 'string' ? body.detail : `HTTP ${response.status}`);
+  }
 }
 
 /** 解析 POST 响应流；同一个事件的 data 行可能被网络分块拆开。 */
@@ -43,6 +46,7 @@ export async function sendChatMessageSSE(
   onError?: (error: Error) => void,
   onComplete?: () => void,
   signal?: AbortSignal,
+  bookingConfirmationToken?: string,
 ): Promise<void> {
   const response = await fetch(`${getApiBase()}/api/chat/${encodeURIComponent(sessionId)}`, {
     method: 'POST',
@@ -51,10 +55,10 @@ export async function sendChatMessageSSE(
       Accept: 'text/event-stream',
       ...authHeaders(),
     },
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({ message, booking_confirmation_token: bookingConfirmationToken }),
     signal,
   });
-  requireOk(response);
+  await requireOk(response);
   if (!response.body || !response.headers.get('content-type')?.includes('text/event-stream')) {
     throw new Error('后端未返回聊天事件流');
   }
@@ -104,7 +108,7 @@ export async function sendChatMessageSSE(
 
 export async function fetchConversations(): Promise<RemoteConversation[]> {
   const response = await fetch(`${getApiBase()}/api/chat/conversations`, { headers: authHeaders() });
-  requireOk(response);
+  await requireOk(response);
   return response.json();
 }
 
@@ -112,7 +116,7 @@ export async function fetchMessages(sessionId: string): Promise<RemoteMessage[]>
   const response = await fetch(`${getApiBase()}/api/chat/${encodeURIComponent(sessionId)}/messages`, {
     headers: authHeaders(),
   });
-  requireOk(response);
+  await requireOk(response);
   return response.json();
 }
 
@@ -121,7 +125,7 @@ export async function deleteConversation(sessionId: string): Promise<void> {
     method: 'DELETE',
     headers: authHeaders(),
   });
-  requireOk(response);
+  await requireOk(response);
 }
 
 export async function updateMessageFeedback(
@@ -137,5 +141,5 @@ export async function updateMessageFeedback(
       body: JSON.stringify({ feedback }),
     },
   );
-  requireOk(response);
+  await requireOk(response);
 }

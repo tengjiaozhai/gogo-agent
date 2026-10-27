@@ -4,7 +4,8 @@ import remarkGfm from 'remark-gfm';
 import { PlanTaskList } from './ProgressCard';
 import TravelResultCard from './TravelResultCard';
 import BookingResultCard from './BookingResultCard';
-import type { Message, TimelineItem, PlanHtmlData } from '../types';
+import BookingConfirmationCard from './BookingConfirmationCard';
+import type { Message, TimelineItem, PlanHtmlData, BookingConfirmation } from '../types';
 import { isPersistedMessageId } from '../store/chatStore';
 
 // ── Agent display names ───────────────────────────────────────────────────
@@ -319,6 +320,10 @@ function MarkdownContent({ content, inactive = false }: { content: string; inact
 
 // ── Main component ────────────────────────────────────────────────────────
 interface Props {
+  onBookingConfirm?: (data: BookingConfirmation) => void;
+  bookingBusy?: boolean;
+  onBookingCheck?: (bookingId: string) => void;
+  processedBookingIds?: Set<string>;
   msg: Message;
   liveTimeline?: TimelineItem[];
   isStreaming?: boolean;
@@ -402,7 +407,7 @@ function FeedbackButtons({
   );
 }
 
-export default function AgentMessageBlock({ msg, liveTimeline = [], isStreaming, onFeedback }: Props) {
+export default function AgentMessageBlock({ msg, liveTimeline = [], isStreaming, onFeedback, onBookingConfirm, bookingBusy, processedBookingIds, onBookingCheck }: Props) {
   const failed = msg.replyStatus === 'failed';
   const timeline = msg.timeline && msg.timeline.length > 0 ? msg.timeline : liveTimeline;
   const hasContent = msg.content.trim().length > 0;
@@ -455,11 +460,18 @@ export default function AgentMessageBlock({ msg, liveTimeline = [], isStreaming,
                     </div>
                   );
                 }
+                if (item.kind === 'booking_confirmation') {
+                  if (failed) return null;
+                  return <BookingConfirmationCard key={`confirmation-${item.data.confirmation_id}`} data={item.data}
+                    disabled={bookingBusy === true || msg.replyStatus !== 'completed' || !onBookingConfirm}
+                    processed={processedBookingIds?.has(item.data.confirmation_id) === true}
+                    onConfirm={(data) => onBookingConfirm?.(data)} />;
+                }
                 if (item.kind === 'booking') {
                   if (failed) return null;
                   return (
                     <div key={`booking-${idx}`} className="timeline-booking">
-                      <BookingResultCard data={item.data} />
+                      <BookingResultCard data={item.data} onCheck={onBookingCheck} busy={bookingBusy} />
                     </div>
                   );
                 }

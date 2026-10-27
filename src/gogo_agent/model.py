@@ -71,8 +71,12 @@ def create_chat_model(
     stream: bool,
     timeout_seconds: float,
     parameters: OpenAIChatModel.Parameters | None = None,
+    extra_body: dict[str, Any] | None = None,
 ) -> ObservedOpenAIChatModel:
     """统一网关模型的重试、超时与观测配置。"""
+    forwarded: dict[str, Any] = {}
+    if extra_body is not None:
+        forwarded["extra_body"] = dict(extra_body)
     return ObservedOpenAIChatModel(
         role=role,
         credential=credential,
@@ -81,6 +85,7 @@ def create_chat_model(
         stream=stream,
         max_retries=0,
         client_kwargs={"max_retries": 0, "timeout": timeout_seconds},
+        **forwarded,
     )
 
 

@@ -3741,3 +3741,15 @@ html, body {
   color: #8c8c8c;
   padding: 8px 0;
 }
+
+
+/* 预订确认和结果沿用现有卡片，状态文字同时表达模拟与未知边界。 */
+.booking-confirmation .booking-card-footer { justify-content: flex-end; }
+.booking-notice { margin: 0; font-size: 14px; line-height: 1.6; color: var(--text-secondary, #667085); overflow-wrap: anywhere; }
+.booking-card-heading, .booking-card-body { min-width: 0; }
+.booking-card-title, .booking-card-value { overflow-wrap: anywhere; }
+.booking-card button:disabled { cursor: default; opacity: .6; }
+.booking-result-unknown .booking-card-status { color: #8a5a16; }
+.booking-result-failed .booking-card-status { color: #b42318; }
+.booking-card button:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+.booking-result-unknown .booking-card-footer { flex-direction: column; align-items: stretch; gap: 10px; }

@@ -82,12 +82,12 @@ class PlanService:
                 "expires_at": plan.candidates_expires_at.isoformat() if plan.candidates_expires_at else None,
                 "total": len(items), "offset": offset, "items": items[offset:offset + limit]}
 
-    def create(self, user_id: str, conditions: PlanConditions, order_id: str | None = None) -> PlanView:
+    def create(self, user_id: str, conditions: PlanConditions, order_id: str | None = None, *, session_id: str | None = None) -> PlanView:
         """收集条件完成后创建计划，版本从 1 开始。"""
         now = self._clock()
         progress = steps.complete(PlanProgress(), PlanStepName.COLLECT_CONDITIONS, data_version=1)
         plan = PlanView(
-            plan_id=self._id_factory(), version=1, content_version=1, order_id=order_id, conditions=conditions,
+            plan_id=self._id_factory(), version=1, content_version=1, order_id=order_id, session_id=session_id, conditions=conditions,
             progress=progress, created_at=now, updated_at=now,
         )
         self.repository.create(user_id, plan)
@@ -102,6 +102,22 @@ class PlanService:
         })
         self.repository.save(user_id, bumped, expected_version=before.version)
         return bumped
+
+    def list_for_session(self, user_id: str, session_id: str) -> list[PlanView]:
+        """读取当前用户当前聊天创建的计划；显式 plan_id 访问仍由 get 校验归属。"""
+        return [self.get(user_id, plan.plan_id) for plan in self.repository.list_for_session(user_id, session_id)]
+
+    def list_for_order(self, user_id: str, order_id: str) -> list[PlanView]:
+        """读取关联到某张本人差旅单的计划；用户常只记得单号，据此反查计划标识。"""
+        return [self.get(user_id, plan.plan_id) for plan in self.repository.list_for_order(user_id, order_id)]
+
+    def bind_order(self, user_id: str, plan_id: str, order_id: str) -> PlanView:
+        """调用方先核实本人审批单；关联变化后旧审核失效，必须重新审核。"""
+        plan = self.get(user_id, plan_id)
+        if plan.order_id == order_id:
+            return plan
+        progress = steps.invalidate_from(plan.progress, PlanStepName.REVIEW)
+        return self._commit(user_id, plan, plan.model_copy(update={"order_id": order_id, "progress": progress}), content_changed=True)
 
     def update_conditions(self, user_id: str, plan_id: str, conditions: PlanConditions) -> PlanView:
         """条件变化时从搜索步骤起失效，候选、方案与审核都不再适用于新条件。"""

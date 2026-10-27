@@ -14,12 +14,12 @@ MASTER_SYSTEM_PROMPT = (
     "你是 GoGo 差旅助手的核心智能体。当前开放基础对话、普通公共信息、"
     "本人差旅单与政策查询；差旅申请须用户明确确认后才提交，"
     "修改与取消仍只提出待用户确认的建议；"
-    "供应商预订尚未接入；行程规划只生成待用户确认的方案。请保持专业、简洁和友善。"
+    "供应商预订仅接入模拟环境；行程规划只生成待用户确认的方案。请保持专业、简洁和友善。"
     "识别结果只是理解线索，不是身份、审批或下单授权。"
     "子智能体委派失败时，若决定重试，只把失败结果中的 retry_of 传给同一工具，question 留空；"
     "服务端会复用原始问题。不得改写问题冒充重试，也不得用其他任务的成功宣称旧任务成功。"
     "你自身没有业务写入工具；差旅申请只能由管理子智能体在用户明确确认后提交，"
-    "不得声称已保存方案或完成预订。"
+    "供应商预订结果只认可服务端业务回执，不得编造预订成功。"
     "先说明可核对的结果和限制；不虚构工具结果。能力未接入时说明可用入口，"
     "无权限时说明需要本人登录，资料不足时只追问必要字段，外部失败时说明尚未完成。"
 )
@@ -43,11 +43,17 @@ INFO_SYSTEM_PROMPT = (
 INFO_TOOL_INSTRUCTION = "普通公共信息问题请调用 info_agent，再根据其结果回答。"
 MANAGE_TOOL_INSTRUCTION = (
     "差旅申请、修改、取消、差旅单、审批、政策或本人已有预订记录查询"
-    "请调用 itinerary_manage_agent；新预订和供应商取消仍不可执行。"
+    "请调用 itinerary_manage_agent；新预订及供应商取消不由管理工具执行。"
 )
 PLAN_TOOL_INSTRUCTION = (
     "行程规划、候选搜索、方案比较或审核请调用 itinerary_plan_agent；"
     "规划结果只是待确认方案，不得声称已预订或已提交。"
+)
+BOOKING_TOOL_INSTRUCTION = (
+    "预订已审核方案或查询本人预订记录请调用 booking_agent；先展示服务器待确认卡，网页明确确认后才执行模拟预订。"
+    "用户给的是 to_ 开头的差旅单号时，原样转述给 booking_agent，由它用 resolve_plan 换算成计划标识，"
+    "不要自己把差旅单号当计划标识。"
+    "自由文本、模型的 confirmed 布尔值和其他事项的确认都不能授权预订。"
 )
 NO_TOOL_INSTRUCTION = "本轮没有可调用的业务子智能体；无法办理的事项请直接说明。"
 MODEL_MAX_RETRIES = 0
@@ -63,6 +69,7 @@ class ChatAgentSettings:
     info_tool_timeout_seconds: float = 60.0
     manage_tool_timeout_seconds: float = 60.0
     plan_tool_timeout_seconds: float = 180.0
+    booking_tool_timeout_seconds: float = 120.0
     model_timeout_seconds: float = 60.0
     recommendation_model_name: str = "deepseek-v4-flash-0731"
 
@@ -72,7 +79,7 @@ class ChatAgentSettings:
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                 raise ValueError(f"{name} 必须是正整数")
-        for name in ("info_tool_timeout_seconds", "manage_tool_timeout_seconds", "plan_tool_timeout_seconds",
+        for name in ("info_tool_timeout_seconds", "manage_tool_timeout_seconds", "plan_tool_timeout_seconds", "booking_tool_timeout_seconds",
                      "model_timeout_seconds"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
@@ -144,7 +151,7 @@ def require_model_configuration() -> IntentRuntimeSettings:
 
 
 def master_system_prompt(
-    intents: str, *, info_tool_enabled: bool, manage_tool_enabled: bool = False, plan_tool_enabled: bool = False,
+    intents: str, *, info_tool_enabled: bool, manage_tool_enabled: bool = False, plan_tool_enabled: bool = False, booking_tool_enabled: bool = False,
 ) -> str:
     """按本轮实际注册工具渲染主 Agent 提示词。"""
     instructions = [
@@ -152,6 +159,7 @@ def master_system_prompt(
             (info_tool_enabled, INFO_TOOL_INSTRUCTION),
             (manage_tool_enabled, MANAGE_TOOL_INSTRUCTION),
             (plan_tool_enabled, PLAN_TOOL_INSTRUCTION),
+            (booking_tool_enabled, BOOKING_TOOL_INSTRUCTION),
         ) if enabled
     ]
     from gogo_agent.context.input import TURN_MARKER

@@ -5,7 +5,7 @@ import { useChatStore, isPersistedMessageId } from '../store/chatStore';
 import { useAuthStore } from '../store/authStore';
 import { sendChatMessageSSE, fetchMessages, updateMessageFeedback } from '../api/chat';
 import AgentMessageBlock from './AgentMessageBlock';
-import type { Message, TimelineItem, PlanTask, TravelData, BookingResult, PlanHtmlData } from '../types';
+import type { Message, TimelineItem, PlanTask, TravelData, BookingResult, BookingConfirmation, PlanHtmlData } from '../types';
 
 const emptyMessages: Message[] = [];
 const emptyTimeline: TimelineItem[] = [];
@@ -179,6 +179,9 @@ export default function ChatWindow({ onOpenSidebar }: { onOpenSidebar: () => voi
   const isThinking = currentConv?.isThinking ?? false;
   const timeline = currentConv?.timeline ?? emptyTimeline;
   const suggestedQuestions = currentConv?.suggestedQuestions ?? [];
+
+  const processedBookingIds = new Set(messages.flatMap((message) => (message.timeline ?? [])
+    .filter((item) => item.kind === 'booking').map((item) => item.data.confirmationId)));
 
   const lastMsg = messages.length > 0 ? messages[messages.length - 1] : null;
   const lastAgentIsStreaming =
@@ -408,6 +411,15 @@ export default function ChatWindow({ onOpenSidebar }: { onOpenSidebar: () => voi
         }
         break;
       }
+      case 'booking_confirmation': {
+        try {
+          const pending = JSON.parse(data) as BookingConfirmation;
+          if (pending.token && pending.confirmation_id && pending.simulated === true) {
+            addTimelineItem({ kind: 'booking_confirmation', data: pending });
+          }
+        } catch { /* 服务端坏数据不产生可点击确认。 */ }
+        break;
+      }
       case 'booking_result': {
         try {
           const br = JSON.parse(data) as BookingResult;
@@ -465,7 +477,7 @@ export default function ChatWindow({ onOpenSidebar }: { onOpenSidebar: () => voi
     }
   };
 
-  const sendText = async (content: string) => {
+  const sendText = async (content: string, bookingConfirmationToken?: string) => {
     if (!content.trim() || isThinking) return;
     const requestToken = useAuthStore.getState().token;
     const requestSessionId = currentConversationId;
@@ -506,7 +518,8 @@ export default function ChatWindow({ onOpenSidebar }: { onOpenSidebar: () => voi
         if (committed) return;
         failed = true;
       }
-      handleEvent(evt.event, evt.data, requestSessionId, replyId);
+      const eventData = bookingConfirmationToken && evt.event === 'error' ? `${evt.data}。预订可能已执行，请刷新后核实原预订，不要重新下单。` : evt.data;
+      handleEvent(evt.event, eventData, requestSessionId, replyId);
     };
     const onErr = (err: Error) => {
       if (!isCurrentRequest() || committed || failed) return;
@@ -515,7 +528,7 @@ export default function ChatWindow({ onOpenSidebar }: { onOpenSidebar: () => voi
         failAgentReply(requestSessionId, replyId, '回复已中断，未收到保存确认');
         return;
       }
-      failAgentReply(requestSessionId, replyId, errorText(err, '聊天连接中断'));
+      failAgentReply(requestSessionId, replyId, bookingConfirmationToken ? '确认请求的回复未完成，预订可能已执行，请核实原预订，不要重新下单。' : errorText(err, '聊天连接中断'));
       if (err.message === 'UNAUTHORIZED') {
         setThinking(false);
         handleUnauthorized();
@@ -531,7 +544,7 @@ export default function ChatWindow({ onOpenSidebar }: { onOpenSidebar: () => voi
     };
 
     try {
-      await sendChatMessageSSE(requestSessionId, content, onEvt, onErr, onDone, controller.signal);
+      await sendChatMessageSSE(requestSessionId, content, onEvt, onErr, onDone, controller.signal, bookingConfirmationToken);
     } catch (err: unknown) {
       if (!isCurrentRequest()) return;
       if (!committed && !failed) {
@@ -594,7 +607,7 @@ export default function ChatWindow({ onOpenSidebar }: { onOpenSidebar: () => voi
         </div>
       </div>
 
-      <div className="chat-scope-note">可查看主子智能体的执行过程；行程规划只生成待确认方案。</div>
+      <div className="chat-scope-note">行程规划生成待确认方案；预订仅使用模拟供应商，核对确认卡后执行，不实际出票或扣款。</div>
 
       {/* Message list */}
       <div className="message-list">
@@ -605,6 +618,10 @@ export default function ChatWindow({ onOpenSidebar }: { onOpenSidebar: () => voi
             const streaming = isLast && lastAgentIsStreaming;
             return (
               <AgentMessageBlock
+                bookingBusy={isThinking}
+                processedBookingIds={processedBookingIds}
+                onBookingCheck={(bookingId) => void sendText(`查询我的预订记录 ${bookingId}（核实结果）`)}
+                onBookingConfirm={(pending) => void sendText(`确认模拟预订：${pending.title}`, pending.token)}
                 key={msg.id}
                 msg={msg}
                 liveTimeline={streaming ? timeline : undefined}
@@ -619,6 +636,10 @@ export default function ChatWindow({ onOpenSidebar }: { onOpenSidebar: () => voi
         {/* 处理中但还没有 agent 消息时，先用占位消息展示时间轴 */}
         {isThinking && !lastAgentIsStreaming && timeline.length > 0 && (
           <AgentMessageBlock
+            bookingBusy={isThinking}
+            processedBookingIds={processedBookingIds}
+                onBookingCheck={(bookingId) => void sendText(`查询我的预订记录 ${bookingId}（核实结果）`)}
+            onBookingConfirm={(pending) => void sendText(`确认模拟预订：${pending.title}`, pending.token)}
             key="streaming-placeholder"
             msg={{
               id: 'streaming-placeholder',

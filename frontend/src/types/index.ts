@@ -16,6 +16,7 @@ export type TimelineItem =
   | { kind: 'plan'; tasks: PlanTask[] }
   | { kind: 'travel'; data: TravelData }
   | { kind: 'booking'; data: BookingResult }
+  | { kind: 'booking_confirmation'; data: BookingConfirmation }
   | { kind: 'plan_html'; data: PlanHtmlData };
 
 export interface Message {
@@ -142,9 +143,36 @@ export interface TravelData {
   items: FlightItem[] | HotelItem[] | TrainItem[] | Record<string, unknown>[];
 }
 
-/** 预订下单成功结果，用于渲染带“立即支付”按钮的支付卡片 */
+/** 本人已保存的待确认摘要；token仅回传认证接口，不进入模型文本。 */
+export interface BookingConfirmation {
+  confirmation_id: string;
+  token: string;
+  plan_id: string;
+  content_version: number;
+  route: string;
+  start_time: string;
+  end_time: string;
+  proposal_tag: string;
+  leg: 'outbound' | 'inbound' | 'hotel';
+  biz_type: string;
+  title: string;
+  amount: string;
+  currency: string;
+  expires_at: number;
+  simulated: true;
+}
+
+/** 服务端预订事实；UNKNOWN不能显示为下单成功。 */
 export interface BookingResult {
   type: 'booking_result';
+  confirmationId: string;
+  route: string;
+  startTime: string;
+  endTime: string;
+  bookingId: string | null;
+  resolution: 'CONFIRMED' | 'FAILED' | 'UNKNOWN';
+  simulated: true;
+  detail: string;
   bizType: 'flight' | 'hotel' | 'train' | 'unknown';
   bizTypeLabel: string;
   orderId: string;

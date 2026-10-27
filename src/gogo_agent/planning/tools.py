@@ -16,6 +16,9 @@ from agentscope.tool import FunctionTool, Toolkit
 from pydantic import ValidationError
 
 from gogo_agent.request_context import RequestContext
+from gogo_agent.travel.dependencies import get_travel_service
+from gogo_agent.travel.models import TravelOrderStatus
+from gogo_agent.travel.service import BusinessError, TravelBusinessService
 
 from .models import (
     DimensionWeights, PlanConditions, PlanPolicy, PlanStepName, PlanView, PreferenceScores, ReviewVerdict,
@@ -72,7 +75,7 @@ def _summary(plan: PlanView) -> dict[str, Any]:
     """面向模型的计划摘要：只含引用、版本、下一步和带来源的方案，不含完整候选。"""
     pending = next_step(plan.progress)
     data: dict[str, Any] = {
-        "plan_id": plan.plan_id,
+        "plan_id": plan.plan_id, "order_id": plan.order_id,
         "version": plan.version,
         "next_step": pending.value if pending is not None else None,
         "terminated": plan.progress.terminated,
@@ -110,13 +113,39 @@ def build_plan_toolkit(
     search_provider: SearchProvider,
     assessors: Sequence[SubjectiveAssessor],
     approved: ApprovedTrip | None = None,
+    travel_provider: Callable[[], TravelBusinessService] = get_travel_service,
 ) -> Toolkit:
     """注册规划工具；所有操作都限定在 request.user_id 的计划之内。"""
     user_id = request.user_id
 
+    def approved_order(order_id: str, conditions: PlanConditions):
+        order = travel_provider().get_order(user_id, order_id)
+        if order.status is not TravelOrderStatus.APPROVED:
+            raise PlanError("APPROVAL_NOT_APPROVED", "差旅单尚未审批通过，不能作为预订依据")
+        if (order.departure_city != conditions.origin or order.destination != conditions.destination
+                or order.departure_date != conditions.departure_date or order.return_date != conditions.return_date):
+            raise PlanError("ORDER_PLAN_MISMATCH", "差旅单城市或日期与计划不一致")
+        return order
+
+    def list_approved_orders() -> str:
+        """查询本人的已审批差旅单，用于用户选定规划及后续预订依据。"""
+        rows = travel_provider().my_travel_orders(user_id)
+        return _ok({"orders": [dict(order_id=row.orderId, origin=row.departureCity, destination=row.destination,
+                                      departure_date=row.departureDate, return_date=row.returnDate)
+                               for row in rows if row.status == TravelOrderStatus.APPROVED.value]})
+
+    def bind_travel_order(plan_id: str, order_id: str) -> str:
+        """把计划关联到本人已批准且城市日期相同的差旅单；旧审核失效，下一步重新审核。"""
+        try:
+            plan = service.get(user_id, plan_id)
+            approved_order(order_id, plan.conditions)
+            return _ok(_summary(service.bind_order(user_id, plan_id, order_id)), "已关联，请重新审核")
+        except (PlanError, BusinessError) as exc:
+            return _fail(exc.code, str(exc))
+
     def create_plan(
         origin: str = "", destination: str = "", departure_date: str = "", return_date: str = "",
-        preferences: str = "", budget: float = 0,
+        preferences: str = "", budget: float = 0, order_id: str = "",
     ) -> str:
         """收集到出发城市、目的城市、去程与返程日期后创建计划；缺少字段时只返回需要补充的内容，不创建计划。"""
         missing = [label for label, value in (
@@ -133,7 +162,12 @@ def build_plan_toolkit(
             )
         except ValueError:
             return _fail("INVALID_PARAM", "日期格式应为 YYYY-MM-DD，且返程日期必须晚于去程日期")
-        plan = service.create(user_id, conditions)
+        if order_id:
+            try:
+                approved_order(order_id, conditions)
+            except (PlanError, BusinessError) as exc:
+                return _fail(exc.code, str(exc))
+        plan = service.create(user_id, conditions, order_id=order_id or None, session_id=request.session_id)
         return _ok(_summary(plan), "计划已创建，请继续搜索候选")
 
     async def search_candidates(plan_id: str) -> str:
@@ -223,11 +257,18 @@ def build_plan_toolkit(
     async def review_plan(plan_id: str, proposal_tag: str) -> str:
         """对指定代表方案（综合最佳/时间最短/价格最低/最符合偏好）做独立审核；硬规则失败必须整改。"""
         try:
+            plan = service.get(user_id, plan_id)
+            current_approval = approved
+            if plan.order_id:
+                order = approved_order(plan.order_id, plan.conditions)
+                current_approval = ApprovedTrip(origin=order.departure_city, destination=order.destination)
             final = await service.review(
-                user_id, plan_id, proposal_tag=proposal_tag, assessors=assessors, approved=approved,
+                user_id, plan_id, proposal_tag=proposal_tag, assessors=assessors, approved=current_approval,
             )
         except PlanError as exc:
             return _plan_failure(exc)
+        except BusinessError as exc:
+            return _fail(exc.code, str(exc))
         blocking = [issue.evidence for issue in final.arbitration.issues if issue.severity == ReviewVerdict.FAIL]
         return _ok({
             "review_id": final.review_id, "plan_version": final.plan_version,
@@ -239,8 +280,8 @@ def build_plan_toolkit(
         }, "审核完成")
 
     allowed = PermissionDecision(behavior=PermissionBehavior.ALLOW, message="允许受控行程规划与只读审核")
-    read_only = {get_plan, get_candidates}
-    functions = (create_plan, search_candidates, compute_plan, get_plan, get_candidates, review_plan)
+    read_only = {get_plan, get_candidates, list_approved_orders}
+    functions = (create_plan, search_candidates, compute_plan, get_plan, get_candidates, review_plan, list_approved_orders, bind_travel_order)
     return Toolkit(tools=[
         FunctionTool(function, name=function.__name__, is_read_only=function in read_only,
                      is_concurrency_safe=False, permission=allowed)
