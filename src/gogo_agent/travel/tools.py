@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from datetime import date
-from typing import Any
+from typing import Any, Protocol
 
 from agentscope.permission import PermissionBehavior, PermissionDecision
 from agentscope.tool import FunctionTool, Toolkit
@@ -33,7 +33,27 @@ def _submit_idempotency_key(user_id: str, digest: str) -> str:
     return "submit:" + hashlib.sha256(f"{user_id}:{digest}".encode("utf-8")).hexdigest()[:48]
 
 
-def build_manage_toolkit(service: TravelBusinessService, request: RequestContext) -> Toolkit:
+class ItineraryPort(Protocol):
+    """差旅提交时的行程绑定端口：校验与试算在写库前完成，绑定在差旅单提交后完成。
+
+    由装配层注入具体实现，差旅模块不直接依赖规划模块。
+    """
+
+    def parse(self, itinerary_json: str, draft: TravelOrderDraft) -> dict[str, Any]:
+        """校验用户安排并返回规范化结果；无法形成方案时抛出 BusinessError。"""
+        ...
+
+    def bind(
+        self, user_id: str, draft: TravelOrderDraft, normalized: dict[str, Any], *,
+        order_id: str, session_id: str,
+    ) -> dict[str, Any]:
+        """为已提交的差旅单生成并关联计划，返回 plan_id；同一差旅单安排一致时幂等。"""
+        ...
+
+
+def build_manage_toolkit(
+    service: TravelBusinessService, request: RequestContext, *, itinerary: ItineraryPort | None = None,
+) -> Toolkit:
     """只注册管理职责工具；差旅申请在用户确认令牌通过后真实提交，其余写工具仍只返回待确认结果。"""
     user_id = request.user_id
 
@@ -110,7 +130,7 @@ def build_manage_toolkit(service: TravelBusinessService, request: RequestContext
     def submit_travel_approval(
         destination: str, departure_city: str, departure_date: str,
         return_date: str, purpose: str,
-        confirmation_token: str = "", acknowledge_conflicts: bool = False,
+        confirmation_token: str = "", acknowledge_conflicts: bool = False, itinerary_json: str = "",
     ) -> str:
         """提交差旅申请（两段式）。
 
@@ -126,6 +146,12 @@ def build_manage_toolkit(service: TravelBusinessService, request: RequestContext
             purpose: 出差事由
             confirmation_token: 上一次调用返回的确认令牌；为空表示只获取摘要
             acknowledge_conflicts: 用户已知情并同意忽略高等级冲突时置 true，需用户明确表态
+            itinerary_json: 用户手工给出的去程、住宿、返程安排（JSON 字符串，可选）。提供时服务端据此生成计划并关联新差旅单；
+                两次调用必须传入相同内容。结构：{"outbound": {"type": "flight", "carrier": "东航", "code": "MU6309",
+                "departure_time": "2026-12-10T16:45", "arrival_time": "2026-12-10T19:50", "price": 1234.0},
+                "hotel": {"name": "...", "check_in": "2026-12-10", "check_out": "2026-12-12", "price_per_night": 273.0},
+                "inbound": {同 outbound 结构}}。时间为不带时区的本地时间；去程出发日须等于出发日期，
+                返程出发日须等于返回日期，酒店入住与离店须与差旅单一致；价格为含税元数，缺失时必须先向用户索取。
         """
         try:
             draft = TravelOrderDraft(
@@ -136,8 +162,17 @@ def build_manage_toolkit(service: TravelBusinessService, request: RequestContext
         except (ValidationError, ValueError):
             return _failure("INVALID_PARAM", "差旅申请字段或日期范围无效")
 
-        digest = confirmation.draft_digest(user_id, draft.model_dump(mode="json"))
         draft_payload = draft.model_dump(mode="json")
+        itinerary_payload: dict[str, Any] | None = None
+        if itinerary_json.strip():
+            if itinerary is None:
+                return _failure("ITINERARY_UNAVAILABLE", "当前入口不支持提交行程安排")
+            try:
+                itinerary_payload = itinerary.parse(itinerary_json, draft)
+            except BusinessError as exc:
+                return _failure(exc.code, str(exc))
+        digest_fields = draft_payload if itinerary_payload is None else {**draft_payload, "itinerary": itinerary_payload}
+        digest = confirmation.draft_digest(user_id, digest_fields)
         try:
             report = service.check_conflicts(user_id, draft)
         except BusinessError as exc:
@@ -160,6 +195,7 @@ def build_manage_toolkit(service: TravelBusinessService, request: RequestContext
             return _failure("CONFIRMATION_REQUIRED", message, data={
                 "draft": draft_payload,
                 "conflicts": conflicts,
+                "itinerary": itinerary_payload,
                 "high_conflict": bool(high_conflicts),
                 "confirmation_token": token,
             })
@@ -196,10 +232,18 @@ def build_manage_toolkit(service: TravelBusinessService, request: RequestContext
             )
         except BusinessError as exc:
             return _failure(exc.code, str(exc))
-        return _success(
-            order.model_dump(mode="json", exclude={"user_id"}),
-            "差旅申请已提交，等待审批",
-        )
+        payload = order.model_dump(mode="json", exclude={"user_id"})
+        if itinerary is not None and itinerary_payload is not None:
+            try:
+                payload["plan_id"] = itinerary.bind(
+                    user_id, draft, itinerary_payload, order_id=order.order_id, session_id=request.session_id,
+                )["plan_id"]
+            except BusinessError as exc:
+                return _failure(
+                    exc.code, f"差旅单已提交（{order.order_id}），但行程计划未生成：{exc}",
+                    data={"order_id": order.order_id, "status": order.status.value},
+                )
+        return _success(payload, "差旅申请已提交，等待审批")
 
     def modify_travel_order(order_id: str, changes_json: str) -> str:
         """提出本人差旅单修改请求；未获用户确认前不写入。"""

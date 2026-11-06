@@ -179,6 +179,28 @@ def test_065_order_id_widely_copied_into_plan_id_is_rejected_with_actionable_cod
     assert plan_id  # 正确标识本身可用，只是不能被单号替代
 
 
+def test_065_combo_code_used_as_tag_is_rejected_and_error_lists_real_tags():
+    """模型把组合编号（如 F8）当成代表方案标签时必须被拒绝，并列出真实可用标签供用户选择。"""
+    stack, plan_id, _ = ready_stack()
+    ctx = RequestContext(user_id="u001", session_id="s", request_id="r")
+    body = run(call_tool(build_booking_toolkit(stack.service, ctx), "prepare_booking",
+                         {"plan_id": plan_id, "proposal_tag": "F8", "leg": "outbound"}))
+    assert body["errorCode"] == "PROPOSAL_NOT_FOUND"
+    for tag in ("综合最佳", "时间最短", "价格最低", "最符合偏好"):
+        assert tag in body["message"]
+    assert stack.supplier.create_calls == 0
+
+
+def test_065_booking_prompt_lists_only_real_tags_and_forbids_guessing():
+    """预订提示词必须列出真实标签，并禁止把编号或不存在的名称映射为标签。"""
+    from gogo_agent.booking.agent import BOOKING_SYSTEM_PROMPT
+
+    for tag in ("综合最佳", "时间最短", "价格最低", "最符合偏好"):
+        assert tag in BOOKING_SYSTEM_PROMPT
+    assert "PROPOSAL_NOT_FOUND" in BOOKING_SYSTEM_PROMPT
+    assert "不得自行替换或猜测标签" in BOOKING_SYSTEM_PROMPT
+
+
 def test_061_writable_tools_are_disjoint_across_master_planning_and_booking_toolkits(stack: Stack):
     ctx = RequestContext(user_id="u001", session_id="s", request_id="r")
 

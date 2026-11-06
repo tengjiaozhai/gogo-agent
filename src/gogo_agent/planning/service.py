@@ -19,6 +19,7 @@ from .scoring import PlanningError, compute_plan
 from .store import PlanRepository
 
 BUSINESS_TZ = timezone(timedelta(hours=8))
+USER_PROVIDED_SOURCE = "user_provided"
 
 
 class PlanError(ValueError):
@@ -59,8 +60,9 @@ class PlanService:
         plan = self.repository.get(user_id, plan_id)
         if plan is None:
             raise PlanError("PLAN_NOT_FOUND", "计划不存在或不属于当前用户", 404)
-        # 没有 TTL 的旧格式候选不继续使用；清理后必须重新搜索，避免新旧产物混用。
-        if ((plan.candidates is not None and plan.candidates_expires_at is None)
+        # 没有 TTL 的旧格式候选不继续使用；用户手工安排不来自供应商搜索，不设 TTL，故豁免。
+        if ((plan.candidates is not None and plan.candidates_expires_at is None
+                and plan.candidates.source != USER_PROVIDED_SOURCE)
                 or (plan.candidates_expires_at is not None and self._clock() >= plan.candidates_expires_at)):
             progress = steps.invalidate_from(plan.progress, PlanStepName.SEARCH_CANDIDATES)
             plan = self._commit(user_id, plan, plan.model_copy(update={
@@ -138,6 +140,17 @@ class PlanService:
         progress = steps.invalidate_from(progress, PlanStepName.COMPUTE_PROPOSALS)
         after = plan.model_copy(update={"candidates": candidates, "progress": progress, "result": None,
                                         "candidates_expires_at": self._clock() + timedelta(hours=24)})
+        return self._commit(user_id, plan, after, content_changed=True)
+
+    def attach_user_candidates(self, user_id: str, plan_id: str, candidates: CandidateSet) -> PlanView:
+        """保存用户手工安排的候选；不设 TTL，因为它不来自供应商搜索，过期后无法自动重新获取。"""
+        if candidates.source != USER_PROVIDED_SOURCE:
+            raise PlanError("INVALID_CANDIDATE_SOURCE", "仅接受用户手工安排的候选", 422)
+        plan = self.get(user_id, plan_id)
+        progress = steps.complete(plan.progress, PlanStepName.SEARCH_CANDIDATES, data_version=plan.version)
+        progress = steps.invalidate_from(progress, PlanStepName.COMPUTE_PROPOSALS)
+        after = plan.model_copy(update={"candidates": candidates, "progress": progress, "result": None,
+                                        "candidates_expires_at": None})
         return self._commit(user_id, plan, after, content_changed=True)
 
     def record_search_failure(self, user_id: str, plan_id: str, error: str) -> PlanView:

@@ -14,6 +14,7 @@ import os
 from gogo_agent.db.base import Base
 from gogo_agent.db.session import get_engine, get_session_factory
 
+from .itinerary import ItineraryBinder
 from .service import PlanService
 from .store import ItineraryPlanModel, PlanRepository, create_plan_repository
 
@@ -46,6 +47,11 @@ def get_plan_service() -> PlanService:
     if _service is None:
         _service = PlanService(_build_repository())
     return _service
+
+
+def get_itinerary_binder() -> ItineraryBinder:
+    """差旅提交时使用的行程绑定器，共用进程内唯一的规划服务。"""
+    return ItineraryBinder(get_plan_service())
 
 
 def reset_plan_service(service: PlanService | None = None) -> None:

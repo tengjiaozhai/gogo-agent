@@ -243,3 +243,60 @@ async def test_unrelated_new_topic_does_not_inherit_old_travel_action():
     response["related"] = False
     result = await QueryRewriter(FixedModel(response)).rewrite(context)
     assert result.rewritten_question == context.query.question
+
+
+PASTED_SUMMARY = (
+    "差旅申请待确认摘要\n"
+    "项目\t内容\n"
+    "行程方向\t北京 ⇄ 广州\n"
+    "出发日期\t2026-12-10\n"
+    "返回日期\t2026-12-12（3天2晚）\n"
+    "出发城市\t北京\n"
+    "目的地\t广州\n"
+    "出差事由\t客户拜访\n"
+    "方案\t去程 F8 + 酒店 H7（2晚）+ 返程 F16\n"
+    "总费用\t¥2,566.00\n"
+    "具体安排：\n\n"
+    "✈️ 去程 F8：东航 MU6309（11-10 16:45→19:50）\n"
+    "🏨 酒店 H7：维也纳酒店·广州惠福西北京路步行街店（2晚，¥273/晚，含早）\n"
+    "✈️ 返程 F16：深航 ZH9147（11-12 07:30→10:20）；  帮我提交差旅单"
+)
+
+
+def summary_context(question: str) -> RewriteContext:
+    return RewriteContext(
+        query=QueryInput(question=question), history=[],
+        reference_date=date.fromisoformat(CORPUS["reference_date"]),
+    )
+
+
+@pytest.mark.asyncio
+async def test_pasted_summary_titles_do_not_require_their_action_words():
+    """粘贴摘要的标题与明细不是用户动作；改写保留请求句即可通过。"""
+    expected = "帮我提交差旅单：北京⇄广州，2026-12-10出发，2026-12-12返回（3天2晚），出差事由客户拜访。"
+    result = await QueryRewriter(FixedModel(rewrite_response(expected))).rewrite(summary_context(PASTED_SUMMARY))
+    assert result.rewritten_question == expected
+
+
+@pytest.mark.asyncio
+async def test_pasted_summary_still_requires_its_request_action():
+    """粘贴内容中的请求句仍受保护：改写丢掉「提交」必须拒绝，且报错应指向「提交」。"""
+    model = FixedModel(rewrite_response("北京到广州的差旅单，2026-12-10至2026-12-12。"))
+    with pytest.raises(ModelOutputError, match="提交"):
+        await QueryRewriter(model).rewrite(summary_context(PASTED_SUMMARY))
+
+
+@pytest.mark.asyncio
+async def test_multiline_request_without_blank_line_still_requires_every_action():
+    """同一段内的多行请求仍整体计数：丢掉「查询」必须拒绝。"""
+    model = FixedModel(rewrite_response("申请出差"))
+    with pytest.raises(ModelOutputError, match="查询"):
+        await QueryRewriter(model).rewrite(summary_context("查询航班\n并申请出差"))
+
+
+@pytest.mark.asyncio
+async def test_action_falls_back_to_earlier_paragraph_when_last_has_none():
+    """最后一段没有动作词时，取前面最近的含动作词段落。"""
+    model = FixedModel(rewrite_response("北京到广州的差旅单，2026-12-10至2026-12-12。"))
+    with pytest.raises(ModelOutputError, match="提交"):
+        await QueryRewriter(model).rewrite(summary_context("帮我提交差旅单\n\n（补充：出发日期 2026-12-10）"))

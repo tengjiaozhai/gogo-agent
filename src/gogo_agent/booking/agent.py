@@ -9,6 +9,7 @@ from agentscope.state import AgentState
 from agentscope.tool import Toolkit
 
 from gogo_agent.context.input import PROMPT_VERSION
+from gogo_agent.planning.scoring import TAG_ORDER
 
 BOOKING_AGENT_NAME = "BookingAgent"
 BOOKING_SYSTEM_PROMPT = f"[提示词版本 {PROMPT_VERSION}]\n" + (
@@ -20,6 +21,9 @@ BOOKING_SYSTEM_PROMPT = f"[提示词版本 {PROMPT_VERSION}]\n" + (
     "绝不能把差旅单号当 plan_id 传给 prepare_booking。"
     "用户给的编号查不到时，先用 resolve_plan 或 list_booking_plans 找到唯一匹配的计划并继续；"
     "只有匹配到多个或完全查不到时才请用户确认，不要直接回复「计划不存在」。"
+    f"代表方案只能用标签指定，可用标签为：{'、'.join(TAG_ORDER)}。"
+    "用户给出的组合编号（如 F8、H7）、班次或酒店编号，以及不在可用标签中的名称，都不能对应到某个标签；"
+    "门禁返回 PROPOSAL_NOT_FOUND 时，把其中列出的可用标签交给用户选择，不得自行替换或猜测标签。"
     "每个去程、返程和酒店独立生成确认卡，用户只授权卡片列出的项目。"
     "执行预订前必须先调用门禁工具并把摘要交给用户确认；没有本轮服务端网页确认时不能自行下单或取消，"
     "网页确认通过时会开放 execute_confirmed_booking，请调用它执行已确认项，不要重新索取确认或更换对象。"

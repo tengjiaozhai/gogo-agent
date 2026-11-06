@@ -33,6 +33,18 @@ _Result = TypeVar("_Result", bound=BaseModel)
 _ACTION_WORDS = re.compile(
     r"预订|预定|查询|查看|申请|报备|提交|规划|安排|取消|撤回|报销|下单|查|搜|看|找|订"
 )
+# 粘贴的差旅摘要卡片固定标题行：其中的名词是摘要结构，不是用户要求的动作。
+_SUMMARY_TEMPLATE_LINES = frozenset({"差旅申请待确认摘要", "具体安排："})
+
+
+def _request_text(text: str) -> str:
+    """去掉粘贴摘要的固定标题行，其余内容整体计入动作保真。
+
+    只精确匹配模板标题行；带具体内容的行与其他文字一律保留。模板改动时该匹配失效，结果是仍然严格拒绝（安全侧）。
+    """
+    return "\n".join(line for line in text.splitlines() if line.strip() not in _SUMMARY_TEMPLATE_LINES)
+
+
 _CURRENT_ACTION = re.compile(r"申请|报备|提交|规划|安排|取消|撤回|报销|预[定订]|下单|查|看|订")
 _VAGUE_TRAVEL_ACTION = re.compile(r"(?P<action>处理|办理|搞|弄).{0,8}(?P<object>出差|差旅)")
 
@@ -194,7 +206,7 @@ class QueryRewriter:
             affirmative = _affirmative_text(context.query.question)
             if requires_action_context(affirmative) and requires_action_context(result.rewritten_question):
                 raise ModelOutputError("改写仍未明确确认或选择的对象；无法补全时应返回 missing_context")
-            before_actions = Counter(_ACTION_WORDS.findall(affirmative))
+            before_actions = Counter(_ACTION_WORDS.findall(_request_text(affirmative)))
             after_actions = Counter(_ACTION_WORDS.findall(result.rewritten_question))
             for action, count in before_actions.items():
                 if after_actions[action] < count:

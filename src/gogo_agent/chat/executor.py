@@ -37,7 +37,7 @@ from gogo_agent.travel.tools import build_manage_toolkit
 from gogo_agent.integrations.tuniu import TuniuCliAdapter
 from gogo_agent.planning.agent import PLAN_AGENT_NAME as _PLAN_AGENT_LABEL, build_plan_agent
 from gogo_agent.planning.assessors import build_model_assessors
-from gogo_agent.planning.dependencies import get_plan_service
+from gogo_agent.planning.dependencies import get_itinerary_binder, get_plan_service
 from gogo_agent.planning.search import TuniuPlanSearch, build_tuniu_key_provider
 from gogo_agent.planning.tools import build_plan_toolkit
 
@@ -227,6 +227,13 @@ class ChatAgentExecutor:
         ])
         return [context, trace] if trace is not None else [context]
 
+    @staticmethod
+    def _continued_state(states: list[AgentState] | None) -> dict[str, AgentState]:
+        """同一回合内后一次委派接续前一次成功调用的状态（深拷贝，失败调用不会污染记忆）；无前次成功调用时返回空参数，沿用存储加载。"""
+        if not states:
+            return {}
+        return {"state": states[-1].model_copy(deep=True)}
+
     def _build_info_agent(self, request: RequestContext, state: AgentState | None = None, *, trace: ExecutionTrace | None = None) -> Agent:
         """为同一认证用户恢复只读 InfoAgent 状态，保留独立会话记忆。"""
         state_session_id = self._state_session_id(request.session_id, request.user_id)
@@ -255,7 +262,7 @@ class ChatAgentExecutor:
             system_prompt=MANAGE_SYSTEM_PROMPT,
             model=self._build_model(stream=False, role="manage"),
             middlewares=self._input_middlewares(request, trace),
-            toolkit=build_manage_toolkit(get_travel_service(), request),
+            toolkit=build_manage_toolkit(get_travel_service(), request, itinerary=get_itinerary_binder()),
             state=state or AgentState(session_id=state_session_id),
             react_config=ReActConfig(
                 max_iters=self._settings.manage_max_iters,
@@ -287,13 +294,18 @@ class ChatAgentExecutor:
         )
         return agent, review_model
 
-    def _build_booking_agent(self, request: RequestContext, turn: BookingChatTurn, *, trace: ExecutionTrace | None = None) -> Agent:
+    def _build_booking_agent(
+        self, request: RequestContext, turn: BookingChatTurn, *, state: AgentState | None = None,
+        trace: ExecutionTrace | None = None,
+    ) -> Agent:
         """仅在服务端验证结构化确认后开放无参数执行工具，模型不能选择另一个授权对象。"""
         key = self._state_session_id(request.session_id, request.user_id)
+        if state is None:
+            state = self._session_store.load_agent_state(key, agent_name=self.BOOKING_AGENT_NAME) or AgentState(session_id=key)
         return build_booking_agent(
             model=self._build_model(stream=False, role="booking"),
             toolkit=build_booking_toolkit(self._booking_service_factory(), request, turn=turn),
-            state=self._session_store.load_agent_state(key, agent_name=self.BOOKING_AGENT_NAME) or AgentState(session_id=key),
+            state=state,
             middlewares=self._input_middlewares(request, trace),
         )
 
@@ -326,7 +338,7 @@ class ChatAgentExecutor:
                 async def invoke(original_question: str) -> str:
                     child: Agent | None = None
                     try:
-                        child = self._build_info_agent(request, trace=trace)
+                        child = self._build_info_agent(request, trace=trace, **self._continued_state(info_states))
                         async with asyncio.timeout(self._settings.info_tool_timeout_seconds) as deadline:
                             reply = await child.reply(UserMsg(name=self.COORDINATOR_AGENT_NAME, content=original_question))
                         if deadline.expired():
@@ -365,7 +377,7 @@ class ChatAgentExecutor:
                 async def invoke(original_question: str) -> str:
                     child: Agent | None = None
                     try:
-                        child = self._build_manage_agent(request, trace=trace)
+                        child = self._build_manage_agent(request, trace=trace, **self._continued_state(manage_states))
                         async with asyncio.timeout(self._settings.manage_tool_timeout_seconds) as deadline:
                             reply = await child.reply(UserMsg(name=self.COORDINATOR_AGENT_NAME, content=original_question))
                         if deadline.expired():
@@ -405,7 +417,7 @@ class ChatAgentExecutor:
                     child: Agent | None = None
                     review_model: object | None = None
                     try:
-                        child, review_model = self._build_plan_agent(request, trace=trace)
+                        child, review_model = self._build_plan_agent(request, trace=trace, **self._continued_state(plan_states))
                         async with asyncio.timeout(self._settings.plan_tool_timeout_seconds) as deadline:
                             reply = await child.reply(UserMsg(name=self.COORDINATOR_AGENT_NAME, content=original_question))
                         if deadline.expired():
@@ -450,7 +462,7 @@ class ChatAgentExecutor:
             async def ask_booking_agent(question: str = "", retry_of: str = "") -> str:
                 """委派本人预订查询、门禁与模拟执行；执行对象只来自服务端本轮已验证的网页确认。"""
                 async def invoke(original_question: str) -> str:
-                    child = self._build_booking_agent(request, turn, trace=trace)
+                    child = self._build_booking_agent(request, turn, trace=trace, **self._continued_state(booking_states))
                     try:
                         async with asyncio.timeout(self._settings.booking_tool_timeout_seconds):
                             reply = await child.reply(UserMsg(name=self.COORDINATOR_AGENT_NAME, content=original_question))
@@ -603,6 +615,7 @@ class ChatAgentExecutor:
         except HTTPException:
             raise
         except Exception as exc:
+            logger.exception("intent prepare failed", extra={"trace_id": current_trace_id()})
             raise HTTPException(503, f"意图处理失败（{type(exc).__name__}）") from None
 
     def _pipeline_extra(

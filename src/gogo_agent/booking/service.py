@@ -124,7 +124,8 @@ class BookingService:
             raise BookingError("PLAN_NOT_COMPUTED", "计划尚未计算方案，不能预订")
         proposal = next((p for p in plan.result.proposals if proposal_tag in p.tags), None)
         if proposal is None:
-            raise BookingError("PROPOSAL_NOT_FOUND", f"没有标签为「{proposal_tag}」的代表方案", 404)
+            available = "、".join(dict.fromkeys(tag for p in plan.result.proposals for tag in p.tags))
+            raise BookingError("PROPOSAL_NOT_FOUND", f"没有标签为「{proposal_tag}」的代表方案；可用标签：{available}", 404)
         review = plan.last_review
         if review is None or not plan.review_is_current() or review.proposal_tag != proposal_tag:
             raise BookingError("REVIEW_REQUIRED", "需先对同一代表方案完成当前内容版本的审核")
