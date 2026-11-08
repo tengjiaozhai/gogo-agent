@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, TYPE_CHECKING
+from typing import Any, Protocol, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .chat import BookingChatTurn
@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 from agentscope.permission import PermissionBehavior, PermissionDecision
 from agentscope.tool import FunctionTool, Toolkit
 
+from gogo_agent.planning.review_flow import review_outcome
 from gogo_agent.planning.service import PlanError
 from gogo_agent.request_context import RequestContext
 from gogo_agent.travel.models import BookingStatus
@@ -44,7 +45,30 @@ def _plan_summary(plan) -> dict[str, Any]:
     }
 
 
-def build_booking_toolkit(service: BookingService, request: RequestContext, *, turn: BookingChatTurn | None = None) -> Toolkit:
+class ReviewPort(Protocol):
+    """预订准备阶段的自动审核端口：由装配层注入，预订模块不直接依赖规划模块。
+
+    返回的摘要字典至少包含 verdict、blocking_issues、warnings。
+    """
+
+    async def review(self, user_id: str, plan_id: str, proposal_tag: str) -> dict[str, Any]:
+        ...
+
+
+def _review_denial(outcome: dict[str, Any]) -> str:
+    """把审核阻塞项与警告压成一条可读的拒绝说明，供 reply_text 拼接。"""
+    parts = [f"审核结论不是通过（{outcome['verdict']}）"]
+    if outcome["blocking_issues"]:
+        parts.append("阻塞项：" + "、".join(outcome["blocking_issues"]))
+    if outcome["warnings"]:
+        parts.append("警告：" + "、".join(outcome["warnings"]))
+    return "；".join(parts)
+
+
+def build_booking_toolkit(
+    service: BookingService, request: RequestContext, *,
+    turn: BookingChatTurn | None = None, reviewer: ReviewPort | None = None,
+) -> Toolkit:
     """注册预订 Agent 的工具；身份来自服务端 RequestContext，模型参数中的用户标识无效。"""
     user_id = request.user_id
 
@@ -79,19 +103,62 @@ def build_booking_toolkit(service: BookingService, request: RequestContext, *, t
             "next": "选定 plan_id 后调用 prepare_booking；审核非当前版或未通过时必须重新审核",
         }}, ensure_ascii=False)
 
-    def prepare_booking(plan_id: str, proposal_tag: str, leg: str) -> str:
+    async def prepare_booking(plan_id: str, proposal_tag: str, leg: str) -> str:
         """检查审核与差旅审批是否满足预订条件，返回待用户确认的摘要；本工具不会下单。
 
         plan_id 必须是 list_booking_plans 或 resolve_plan 返回的标识，不是 to_ 开头的差旅单号。
+        计划未审核时自动对同一代表方案审核；结论为 fail 时不出卡，warning 只作为建议随卡片展示。
         """
         try:
-            if turn is not None:
-                return json.dumps(turn.prepare(plan_id, proposal_tag, leg), ensure_ascii=False)
-            summary = service.check_ready(user_id, plan_id, proposal_tag=proposal_tag, leg=leg)
+            return await _prepare_with_review(plan_id, proposal_tag, leg)
         except BookingError as exc:
+            stored = _stored_review(plan_id) if exc.code == "REVIEW_NOT_PASSED" else None
             if turn is not None:
-                turn.denials.append(str(exc))
-            return _fail(exc.code, str(exc))
+                # 已有审核为 fail 时，阻塞项与警告也必须进入 denials，与自动审核分支一致。
+                turn.denials.append(str(exc) if stored is None else f"{exc}；{_review_denial(stored)}")
+            return _fail(exc.code, str(exc), data=stored)
+
+    def _stored_review(plan_id: str) -> dict[str, Any] | None:
+        """读取计划已保存的审核结论与警告；只读，不重新审核，不产生模型调用。"""
+        try:
+            plan = service.plans.get(user_id, plan_id)
+        except PlanError:
+            return None
+        if plan.last_review is None:
+            return None
+        return review_outcome(plan.last_review)
+
+    async def _prepare_with_review(plan_id: str, proposal_tag: str, leg: str) -> str:
+        """门禁报 REVIEW_REQUIRED 且有端口时先审核；只有 fail 阻止出卡，warning 放行并作为建议保留，只重试一次。"""
+        try:
+            return _prepare_once(plan_id, proposal_tag, leg)
+        except BookingError as exc:
+            if exc.code != "REVIEW_REQUIRED" or reviewer is None:
+                raise
+        outcome = await reviewer.review(user_id, plan_id, proposal_tag)
+        if outcome["verdict"] == "fail":
+            # 审核 fail 走的是返回值而非异常，必须显式写入 denials，否则用户回复只会是固定的「本轮未下单」。
+            if turn is not None:
+                turn.denials.append(_review_denial(outcome))
+            return _fail(
+                "REVIEW_NOT_PASSED",
+                "行程方案审核未通过，未生成预订确认卡",
+                data={"verdict": outcome["verdict"], "blocking_issues": outcome["blocking_issues"],
+                      "warnings": outcome["warnings"]},
+            )
+        return _prepare_once(plan_id, proposal_tag, leg)
+
+    def _prepare_once(plan_id: str, proposal_tag: str, leg: str) -> str:
+        """一次门禁检查并返回摘要；通过后把审核警告记为建议，失败以 BookingError 抬出，交由调用方处理。"""
+        if turn is not None:
+            prepared = turn.prepare(plan_id, proposal_tag, leg)
+            stored = _stored_review(plan_id)
+            if stored is not None:
+                for warning in stored["warnings"]:
+                    if warning not in turn.advisories:
+                        turn.advisories.append(warning)
+            return json.dumps(prepared, ensure_ascii=False)
+        summary = service.check_ready(user_id, plan_id, proposal_tag=proposal_tag, leg=leg)
         return _fail(
             "CONFIRMATION_REQUIRED",
             "请用户在已认证入口确认本次预订摘要；本对话未下单",

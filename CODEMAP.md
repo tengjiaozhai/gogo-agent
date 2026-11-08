@@ -158,6 +158,7 @@
 - [`src/gogo_agent/planning/scoring.py`](src/gogo_agent/planning/scoring.py) — 确定性地组合去程、住宿、返程，过滤、归一化评分并选出代表方案，不读写存储。
 - [`src/gogo_agent/planning/steps.py`](src/gogo_agent/planning/steps.py) — 维护 Plan-and-Execute 步骤状态、失败次数、条件变化失效与已确认写入去重。
 - [`src/gogo_agent/planning/review.py`](src/gogo_agent/planning/review.py) — 执行客观六维审核、有限次主观评估、确定性仲裁，并把结论绑定计划内容版本。
+- [`src/gogo_agent/planning/review_flow.py`](src/gogo_agent/planning/review_flow.py) — 审核的唯一权威入口：校验已审批差旅单并构造 ApprovedTrip，调用 `PlanService.review`，并把结论压成 verdict / 阻塞项 / 警告摘要供工具与预订端口共用。
 - [`src/gogo_agent/planning/service.py`](src/gogo_agent/planning/service.py) — 编排计划创建、搜索、计算、审核与版本递增，所有操作限定于本人计划。
 - [`src/gogo_agent/planning/store.py`](src/gogo_agent/planning/store.py) — 以用户与计划标识隔离保存计划快照，用版本号拒绝并发覆盖，并以 `session_id` 普通列支持按聊天会话列计划。
 - [`src/gogo_agent/planning/tools.py`](src/gogo_agent/planning/tools.py) — 为规划智能体装配只读候选、计算、审核工具，身份只来自服务端上下文。
@@ -341,6 +342,11 @@
 - [`tests/test_agent_state_storage.py`](tests/test_agent_state_storage.py) — 验证 AgentState 方言类型、旧表扩容与幂等，以及隔离 MySQL/MariaDB 中超过 64 KiB 状态的读回和 JSON/SSE 保存。
 - [`tests/test_068_085_context.py`](tests/test_068_085_context.py) — 验证真实 SDK 输入转换、结构化失败、两轮修订、候选隔离过期及显式偏好的认证和撤回。
 - [`tests/test_booking_chat.py`](tests/test_booking_chat.py) — 验证网页预订的认证确认、实际主子委派、门禁、幂等、失败恢复、未知结果与历史回放。
+- [`tests/test_booking_auto_review.py`](tests/test_booking_auto_review.py) — 验证预订准备时自动审核：未审核计划自动审核后出卡，fail 不出卡并记入 denials，warning 不阻止预订并作为审核建议随确认卡展示。
+- [`tests/test_review_outcome_warnings.py`](tests/test_review_outcome_warnings.py) — 验证审核摘要的警告同时包含客观层与仲裁层、保持顺序并去重，阻塞项只来自仲裁 fail。
+- [`tests/test_itinerary_submit.py`](tests/test_itinerary_submit.py) — 验证差旅单提交时绑定用户行程、候选与日期校验，日期不符或字段缺失时在写库前拒绝。
+- [`tests/test_submit_idempotency.py`](tests/test_submit_idempotency.py) — 验证差旅单提交的幂等键按确认令牌派生：同一确认重试只生成一单，取消后新确认建新单，旧令牌对已取消订单报 `ORDER_NOT_ACTIVE`。
+- [`tests/test_planning_reply_labels.py`](tests/test_planning_reply_labels.py) — 验证规划提示词要求使用标签并禁止内部编号，以及计算结果包含去程、酒店、返程的分段信息。
 - [`tests/test_001.py`](tests/test_001.py) — 验证 001 配置、日期工具、HTTP 健康检查及模拟模型网关调用链。
 - [`tests/test_004_auth.py`](tests/test_004_auth.py) — 验证 004 登录、登出、用户信息隔离、401 拦截与密码哈希自动迁移。
 - [`tests/test_005_chat.py`](tests/test_005_chat.py) — 隔离意图模型后验证会话持久化、AgentState 恢复、用户隔离和 SSE 输出。

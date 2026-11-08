@@ -129,7 +129,8 @@ class BookingService:
         review = plan.last_review
         if review is None or not plan.review_is_current() or review.proposal_tag != proposal_tag:
             raise BookingError("REVIEW_REQUIRED", "需先对同一代表方案完成当前内容版本的审核")
-        if review.verdict is not ReviewVerdict.PASS:
+        # 只有 fail 阻止预订；warning 是建议，由 prepare_booking 随确认卡告知用户。
+        if review.verdict is ReviewVerdict.FAIL:
             raise BookingError("REVIEW_NOT_PASSED", "审核结论不是通过，不能预订")
         if plan.order_id is None:
             raise BookingError("APPROVAL_REQUIRED", "计划未关联差旅单，无法核对审批")

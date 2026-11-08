@@ -28,9 +28,9 @@ def _failure(code: str, message: str, data: dict[str, Any] | None = None) -> str
     return ToolResponse(success=False, errorCode=code, message=message, data=data).model_dump_json()
 
 
-def _submit_idempotency_key(user_id: str, digest: str) -> str:
-    """由用户与行程摘要确定性派生，模型重复调用或重试都命中同一条审计记录。"""
-    return "submit:" + hashlib.sha256(f"{user_id}:{digest}".encode("utf-8")).hexdigest()[:48]
+def _submit_idempotency_key(user_id: str, confirmation_token: str) -> str:
+    """由用户与本次确认令牌确定性派生：同一次确认的重试命中同一条记录；取消后的新确认带新令牌，生成新键。"""
+    return "submit:" + hashlib.sha256(f"{user_id}:{confirmation_token}".encode("utf-8")).hexdigest()[:48]
 
 
 class ItineraryPort(Protocol):
@@ -227,7 +227,7 @@ def build_manage_toolkit(
                 SubmitTravelRequest(
                     **draft.model_dump(),
                     confirmed=True,
-                    idempotency_key=_submit_idempotency_key(user_id, digest),
+                    idempotency_key=_submit_idempotency_key(user_id, confirmation_token.strip()),
                 ),
             )
         except BusinessError as exc:

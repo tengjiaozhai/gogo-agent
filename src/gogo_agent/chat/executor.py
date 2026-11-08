@@ -26,7 +26,7 @@ from gogo_agent.booking.agent import build_booking_agent
 from gogo_agent.booking.chat import BookingChatTurn
 from gogo_agent.booking.dependencies import get_booking_service
 from gogo_agent.booking.service import BookingError, BookingService
-from gogo_agent.booking.tools import build_booking_toolkit
+from gogo_agent.booking.tools import ReviewPort, build_booking_toolkit
 from gogo_agent.travel.confirmation import ConfirmationError
 from gogo_agent.model import create_chat_model
 from gogo_agent.context.input import ModelInputContext
@@ -37,7 +37,7 @@ from gogo_agent.travel.tools import build_manage_toolkit
 from gogo_agent.integrations.tuniu import TuniuCliAdapter
 from gogo_agent.planning.agent import PLAN_AGENT_NAME as _PLAN_AGENT_LABEL, build_plan_agent
 from gogo_agent.planning.assessors import build_model_assessors
-from gogo_agent.planning.dependencies import get_itinerary_binder, get_plan_service
+from gogo_agent.planning.dependencies import PlanReviewer, get_itinerary_binder, get_plan_service
 from gogo_agent.planning.search import TuniuPlanSearch, build_tuniu_key_provider
 from gogo_agent.planning.tools import build_plan_toolkit
 
@@ -296,15 +296,18 @@ class ChatAgentExecutor:
 
     def _build_booking_agent(
         self, request: RequestContext, turn: BookingChatTurn, *, state: AgentState | None = None,
-        trace: ExecutionTrace | None = None,
+        trace: ExecutionTrace | None = None, reviewer: ReviewPort | None = None,
     ) -> Agent:
-        """仅在服务端验证结构化确认后开放无参数执行工具，模型不能选择另一个授权对象。"""
+        """仅在服务端验证结构化确认后开放无参数执行工具，模型不能选择另一个授权对象。
+
+        reviewer 由调用方按次创建与关闭，这里只负责注入工具。
+        """
         key = self._state_session_id(request.session_id, request.user_id)
         if state is None:
             state = self._session_store.load_agent_state(key, agent_name=self.BOOKING_AGENT_NAME) or AgentState(session_id=key)
         return build_booking_agent(
             model=self._build_model(stream=False, role="booking"),
-            toolkit=build_booking_toolkit(self._booking_service_factory(), request, turn=turn),
+            toolkit=build_booking_toolkit(self._booking_service_factory(), request, turn=turn, reviewer=reviewer),
             state=state,
             middlewares=self._input_middlewares(request, trace),
         )
@@ -462,8 +465,16 @@ class ChatAgentExecutor:
             async def ask_booking_agent(question: str = "", retry_of: str = "") -> str:
                 """委派本人预订查询、门禁与模拟执行；执行对象只来自服务端本轮已验证的网页确认。"""
                 async def invoke(original_question: str) -> str:
-                    child = self._build_booking_agent(request, turn, trace=trace, **self._continued_state(booking_states))
+                    child: Agent | None = None
+                    review_model: object | None = None
                     try:
+                        review_model = self._build_model(stream=False, role="review")
+                        reviewer = PlanReviewer(
+                            get_plan_service(), get_travel_service(), build_model_assessors(review_model),
+                        )
+                        child = self._build_booking_agent(
+                            request, turn, trace=trace, reviewer=reviewer, **self._continued_state(booking_states),
+                        )
                         async with asyncio.timeout(self._settings.booking_tool_timeout_seconds):
                             reply = await child.reply(UserMsg(name=self.COORDINATOR_AGENT_NAME, content=original_question))
                         if reply.finished_reason != ReplyFinishedReason.COMPLETED:
@@ -473,6 +484,12 @@ class ChatAgentExecutor:
                         return reply.get_text_content() or ""
                     finally:
                         await self._close_agent_model(child)
+                        if review_model is not None:
+                            review_client = getattr(review_model, "client", None)
+                            if review_client is not None:
+                                closed = review_client.close()
+                                if isawaitable(closed):
+                                    await closed
                 return await attempts.run(self.BOOKING_TOOL_NAME, self.BOOKING_AGENT_NAME, question, retry_of, invoke)
 
             tools.append(FunctionTool(ask_booking_agent, name=self.BOOKING_TOOL_NAME, is_read_only=False,

@@ -10,11 +10,16 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Sequence
+from typing import Any
 
 from gogo_agent.db.base import Base
 from gogo_agent.db.session import get_engine, get_session_factory
+from gogo_agent.travel.service import TravelBusinessService
 
 from .itinerary import ItineraryBinder
+from .review import SubjectiveAssessor
+from .review_flow import review_outcome, review_proposal
 from .service import PlanService
 from .store import ItineraryPlanModel, PlanRepository, create_plan_repository
 
@@ -52,6 +57,25 @@ def get_plan_service() -> PlanService:
 def get_itinerary_binder() -> ItineraryBinder:
     """差旅提交时使用的行程绑定器，共用进程内唯一的规划服务。"""
     return ItineraryBinder(get_plan_service())
+
+
+class PlanReviewer:
+    """预订准备阶段的自动审核适配器，实现 booking.tools.ReviewPort。
+
+    不持有审核模型：模型由调用方按次创建与关闭，此处只使用传入的评估器。
+    """
+
+    def __init__(self, plans: PlanService, travel: TravelBusinessService, assessors: Sequence[SubjectiveAssessor]):
+        self._plans = plans
+        self._travel = travel
+        self._assessors = assessors
+
+    async def review(self, user_id: str, plan_id: str, proposal_tag: str) -> dict[str, Any]:
+        final = await review_proposal(
+            self._plans, user_id, plan_id, proposal_tag=proposal_tag,
+            assessors=self._assessors, travel_provider=lambda: self._travel,
+        )
+        return review_outcome(final)
 
 
 def reset_plan_service(service: PlanService | None = None) -> None:

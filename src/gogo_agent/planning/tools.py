@@ -21,9 +21,10 @@ from gogo_agent.travel.models import TravelOrderStatus
 from gogo_agent.travel.service import BusinessError, TravelBusinessService
 
 from .models import (
-    DimensionWeights, PlanConditions, PlanPolicy, PlanStepName, PlanView, PreferenceScores, ReviewVerdict,
+    DimensionWeights, PlanConditions, PlanPolicy, PlanStepName, PlanView, PreferenceScores,
 )
 from .review import ApprovedTrip, SubjectiveAssessor
+from .review_flow import check_approved_order, review_outcome, review_proposal
 from .search import PlanSearchError
 from .service import PlanError, PlanService
 from .steps import next_step
@@ -71,6 +72,15 @@ def _invalid_field(name: str, value: Any, model: type) -> str:
     return f"参数 {name} 不合法"
 
 
+def _leg_view(candidate) -> dict[str, Any]:
+    """单段交通的展示字段：班次号、出发与到达时间、单段价格。"""
+    return {
+        "code": candidate.code, "carrier": candidate.carrier, "type": candidate.type.value,
+        "departure_time": candidate.departure_time, "arrival_time": candidate.arrival_time,
+        "price": candidate.price,
+    }
+
+
 def _summary(plan: PlanView) -> dict[str, Any]:
     """面向模型的计划摘要：只含引用、版本、下一步和带来源的方案，不含完整候选。"""
     pending = next_step(plan.progress)
@@ -94,6 +104,12 @@ def _summary(plan: PlanView) -> dict[str, Any]:
                 "total_transit": p.metrics.total_transit_hhmm, "overall": p.scores.overall,
                 "experience_flags": p.experience_flags, "policy_violations": p.policy_violations,
                 "warnings": p.warnings,
+                # 回复用户时的真实班次、酒店与单段价格；以上字段只存引用与汇总。
+                "outbound": _leg_view(p.outbound), "inbound": _leg_view(p.inbound),
+                "hotel": {
+                    "name": p.hotel.name, "price_per_night": p.hotel.price_per_night,
+                    "nights": p.hotel.nights,
+                },
             }
             for p in plan.result.proposals
         ]
@@ -119,13 +135,7 @@ def build_plan_toolkit(
     user_id = request.user_id
 
     def approved_order(order_id: str, conditions: PlanConditions):
-        order = travel_provider().get_order(user_id, order_id)
-        if order.status is not TravelOrderStatus.APPROVED:
-            raise PlanError("APPROVAL_NOT_APPROVED", "差旅单尚未审批通过，不能作为预订依据")
-        if (order.departure_city != conditions.origin or order.destination != conditions.destination
-                or order.departure_date != conditions.departure_date or order.return_date != conditions.return_date):
-            raise PlanError("ORDER_PLAN_MISMATCH", "差旅单城市或日期与计划不一致")
-        return order
+        return check_approved_order(travel_provider(), user_id, order_id, conditions)
 
     def list_approved_orders() -> str:
         """查询本人的已审批差旅单，用于用户选定规划及后续预订依据。"""
@@ -257,26 +267,19 @@ def build_plan_toolkit(
     async def review_plan(plan_id: str, proposal_tag: str) -> str:
         """对指定代表方案（综合最佳/时间最短/价格最低/最符合偏好）做独立审核；硬规则失败必须整改。"""
         try:
-            plan = service.get(user_id, plan_id)
-            current_approval = approved
-            if plan.order_id:
-                order = approved_order(plan.order_id, plan.conditions)
-                current_approval = ApprovedTrip(origin=order.departure_city, destination=order.destination)
-            final = await service.review(
-                user_id, plan_id, proposal_tag=proposal_tag, assessors=assessors, approved=current_approval,
+            final = await review_proposal(
+                service, user_id, plan_id, proposal_tag=proposal_tag, assessors=assessors,
+                approved=approved, travel_provider=travel_provider,
             )
         except PlanError as exc:
             return _plan_failure(exc)
         except BusinessError as exc:
             return _fail(exc.code, str(exc))
-        blocking = [issue.evidence for issue in final.arbitration.issues if issue.severity == ReviewVerdict.FAIL]
         return _ok({
             "review_id": final.review_id, "plan_version": final.plan_version,
-            "verdict": final.verdict.value, "needs_rework": final.needs_rework,
             "repair_attempts": service.get(user_id, plan_id).repair_attempts,
-            "blocking_issues": blocking,
-            "warnings": [issue.evidence for issue in final.objective.issues if issue.severity == ReviewVerdict.WARNING],
             "next_step": PlanStepName.AWAIT_CONFIRMATION.value if not final.needs_rework else PlanStepName.COMPUTE_PROPOSALS.value,
+            **review_outcome(final),
         }, "审核完成")
 
     allowed = PermissionDecision(behavior=PermissionBehavior.ALLOW, message="允许受控行程规划与只读审核")

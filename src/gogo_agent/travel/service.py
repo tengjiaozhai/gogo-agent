@@ -316,6 +316,11 @@ class TravelBusinessService:
             with self.repository.transaction() as session:
                 replay = self._replay(session, user_id, "submit", request.idempotency_key, payload)
                 if replay is not None:
+                    # 回放的是创建时的快照；订单之后被取消或失效时，不得再报告为已提交。
+                    row = self.repository.order(session, user_id, replay["order_id"])
+                    if row is None or row.status not in ("DRAFT", "SUBMITTED", "APPROVED"):
+                        state = row.status if row is not None else "MISSING"
+                        raise BusinessError("ORDER_NOT_ACTIVE", f"该次提交对应的差旅单已不再有效（{state}），请重新提交新的申请", 409)
                     return TravelOrderView.model_validate(replay)
                 current = self.repository.matching_active_order(session, user_id, fields)
                 if current is not None:

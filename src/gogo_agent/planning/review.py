@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -19,6 +20,7 @@ from .models import (
 )
 from .scoring import is_cabin_compliant, parse_dt
 
+logger = logging.getLogger(__name__)
 SUBJECTIVE_TIMEOUT_SECONDS = 30.0
 MAX_HOTEL_DISTANCE_KM = 15.0
 RED_EYE_DEPARTURE_HOUR = 22
@@ -276,8 +278,15 @@ async def review_plan(
         raise ReviewError("PROPOSAL_NOT_FOUND", f"没有标签为「{proposal_tag}」的代表方案", 404)
     itinerary = itinerary_from_plan(plan, proposal)
     objective = objective_review(itinerary, plan.result.policy, approved, today)
+    logger.warning("[REVIEW-DBG] objective plan=%s tag=%s verdict=%s issues=%d",
+                   plan.plan_id, proposal_tag, objective.verdict.value, len(objective.issues))
     subjective = list(await asyncio.gather(*(_run_assessor(a, itinerary) for a in assessors)))
+    for result in subjective:
+        logger.warning("[REVIEW-DBG] subjective source=%s verdict=%s available=%s issues=%d",
+                       result.source.value, result.verdict.value, result.available, len(result.issues))
     arbitration = arbitrate(objective, subjective)
+    logger.warning("[REVIEW-DBG] arbitration plan=%s tag=%s verdict=%s issues=%d",
+                   plan.plan_id, proposal_tag, arbitration.verdict.value, len(arbitration.issues))
     return FinalReview(
         review_id=review_id, plan_id=plan.plan_id, plan_version=plan_version, proposal_tag=proposal_tag,
         verdict=arbitration.verdict, needs_rework=arbitration.verdict == ReviewVerdict.FAIL,

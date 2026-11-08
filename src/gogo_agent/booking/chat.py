@@ -52,6 +52,7 @@ class BookingChatTurn:
         self.results: list[dict[str, Any]] = []
         self.other_answers: list[str] = []
         self.denials: list[str] = []
+        self.advisories: list[str] = []  # 审核警告：不阻止预订，仅随待确认摘要告知用户
         self.query_results: list[dict[str, Any]] = []
 
     def prepare(self, plan_id: str, proposal_tag: str, leg: str) -> dict[str, Any]:
@@ -147,6 +148,8 @@ class BookingChatTurn:
             canonical = "\n".join(f"{item['statusLabel']}：{item['title']}，{item['amount']} {item['currency']}。{item['detail']}。这是模拟供应商，不实际出票或扣款。" for item in self.results)
         elif self.pending:
             canonical = "已校验方案与差旅审批，请在下方逐项核对金额并点击确认预订。本轮尚未下单；使用模拟供应商，不实际出票或扣款。"
+            if self.advisories:
+                canonical += "\n审核建议（不影响预订，可据此调整）：" + "；".join(self.advisories) + "。"
         elif self.query_results:
             labels: dict[str | None, str] = {"CONFIRMED": "模拟预订已确认", "UNKNOWN": "结果待核实", "FAILED": "预订未完成"}
             canonical = "本人预订查询（本轮未重新下单）：\n" + "\n".join(
