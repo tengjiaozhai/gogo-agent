@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-export type AppView = 'chat' | 'travel' | 'admin';
+export type AppView = 'chat' | 'travel' | 'admin' | 'preference';
 
 interface UiState {
   view: AppView;

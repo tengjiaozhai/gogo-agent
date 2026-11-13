@@ -210,6 +210,10 @@ export default function Sidebar({
           onClick={() => onNavigate('travel')}>
           💼 我的差旅
         </button>
+        <button className={`sidebar-nav-btn${view === 'preference' ? ' active' : ''}`} type="button"
+          onClick={() => onNavigate('preference')}>
+          ⚙️ 偏好设置
+        </button>
         {isAdmin && (
           <button className={`sidebar-nav-btn${view === 'admin' ? ' active' : ''}`} type="button"
             onClick={() => onNavigate('admin')}>

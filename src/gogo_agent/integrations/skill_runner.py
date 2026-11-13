@@ -29,6 +29,9 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from gogo_agent.request_context import current_trace_id
+from gogo_agent.security.masking import SensitiveMasker
+
 logger = logging.getLogger(__name__)
 
 _RESERVED_ENV = frozenset({"HOME", "TMPDIR"})
@@ -110,12 +113,28 @@ class SkillResult(BaseModel):
 
 
 def redact_secrets(text: str, secrets: Iterable[str]) -> str:
-    """把文本中的密钥原文及其 JSON 转义形式替换为 ***。"""
+    """屏蔽调用方声明的密钥原文（含 JSON 转义形式），再按模式屏蔽手机号、证件号、密钥前缀、Bearer 与 password= 等片段。"""
     for secret in sorted({s for s in secrets if s}, key=len, reverse=True):
         for form in {secret, json.dumps(secret, ensure_ascii=False)[1:-1]}:
             if form:
                 text = text.replace(form, "***")
-    return text
+    return SensitiveMasker.mask(text) or ""
+
+
+def _mask_data(value: Any, secrets: Sequence[str]) -> Any:
+    """递归屏蔽 JSON 叶子中的敏感片段；dict/list 结构与键名保持不变，未命中敏感模式的值原样返回。"""
+    if isinstance(value, str):
+        return redact_secrets(value, secrets)
+    if isinstance(value, int) and not isinstance(value, bool):
+        # 手机号、证件号也可能以 JSON 数字返回；只有命中敏感模式时才转为遮盖后的字符串。
+        text = str(value)
+        masked = redact_secrets(text, secrets)
+        return masked if masked != text else value
+    if isinstance(value, dict):
+        return {key: _mask_data(item, secrets) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_mask_data(item, secrets) for item in value]
+    return value
 
 
 def user_dir_name(user_id: str) -> str:
@@ -230,14 +249,14 @@ class SkillRunner:
                     f"{policy.name} 退出码 {exit_code}：{meaning}" + (f"；stderr：{excerpt}" if excerpt else ""),
                     secrets, exit_code=exit_code, stderr=excerpt,
                 )
-            data = self._parse_json(stdout, secrets)
+            data = _mask_data(self._parse_json(stdout, secrets), secrets)
             duration_ms = int((time.monotonic() - started) * 1000)
-            logger.info("skill=%s user=%s ok exit=0 ms=%d", policy.name, user_key, duration_ms)
+            logger.info("skill=%s user=%s trace=%s ok exit=0 ms=%d", policy.name, user_key, current_trace_id(), duration_ms)
             return SkillResult(data=data, exit_code=0, duration_ms=duration_ms, workdir=str(run_dir))
         except SkillError as exc:
             logger.warning(
-                "skill=%s user=%s failed code=%s msg=%s",
-                policy.name, user_key, exc.code.value, redact_secrets(exc.message, secrets),
+                "skill=%s user=%s trace=%s failed code=%s msg=%s",
+                policy.name, user_key, current_trace_id(), exc.code.value, redact_secrets(exc.message, secrets),
             )
             raise
         finally:
@@ -308,11 +327,37 @@ class SkillRunner:
         else:
             shown = redact_secrets(" ".join(args[:3]), secrets)[:80]
             raise SkillError(SkillErrorCode.COMMAND_NOT_ALLOWED, f"命令不在白名单内：{shown!r}")
+        shell_marks = ("`", "$(", "${", ";", "|", "&&")
+
+        def check_text(text: str) -> None:
+            # 参数不经 shell 解释，但仍拒绝空串、元字符与控制字符，作为纵深防御。
+            if text.strip() == "":
+                raise SkillError(SkillErrorCode.INVALID_ARGUMENT, "不接受空参数")
+            if any(mark in text for mark in shell_marks) or any(ord(ch) < 32 for ch in text):
+                raise SkillError(SkillErrorCode.INVALID_ARGUMENT, "参数包含 shell 元字符或控制字符")
+            if text.startswith(("/", "~")) or ".." in Path(text).parts:
+                raise SkillError(SkillErrorCode.INVALID_ARGUMENT, "不接受路径类参数")
+
+        def check_value(value: object) -> None:
+            # JSON 载荷的每个字符串叶子都按同一规则检查，不再整体跳过。
+            if isinstance(value, str):
+                check_text(value)
+            elif isinstance(value, dict):
+                for item in value.values():
+                    check_value(item)
+            elif isinstance(value, list):
+                for item in value:
+                    check_value(item)
+
         for token in tail:
             if token[:1] in ("{", "["):
-                continue
-            if token.startswith(("/", "~")) or ".." in Path(token).parts:
-                raise SkillError(SkillErrorCode.INVALID_ARGUMENT, "不接受路径类参数")
+                try:
+                    payload = json.loads(token)
+                except ValueError:
+                    raise SkillError(SkillErrorCode.INVALID_ARGUMENT, "JSON 参数格式无效") from None
+                check_value(payload)
+            else:
+                check_text(token)
 
     def _validate_env(self, env: Mapping[str, str] | None) -> dict[str, str]:
         """环境变量必须在白名单内，且不能覆盖运行器固定的 HOME/TMPDIR。"""

@@ -6,6 +6,7 @@ import ChatWindow from './components/ChatWindow';
 import LoginPage from './components/LoginPage';
 import MyTravelPage from './components/MyTravelPage';
 import AdminApprovalPage from './components/AdminApprovalPage';
+import PreferencePage from './components/PreferencePage';
 import { useUiStore } from './store/uiStore';
 import './App.css';
 
@@ -98,6 +99,8 @@ export default function App() {
         <MyTravelPage onOpenSidebar={() => setMobileSidebarOpen(true)} />
       ) : view === 'admin' ? (
         <AdminApprovalPage onOpenSidebar={() => setMobileSidebarOpen(true)} />
+      ) : view === 'preference' ? (
+        <PreferencePage onOpenSidebar={() => setMobileSidebarOpen(true)} />
       ) : (
         <ChatWindow onOpenSidebar={() => setMobileSidebarOpen(true)} />
       )}

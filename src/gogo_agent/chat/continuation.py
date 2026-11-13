@@ -111,7 +111,7 @@ class InfoAgentContinuation:
             except Exception:
                 pass
             return None
-        if record is None:
+        if record is None or record.agent_name is None:
             return None
         if (
             record.agent_name not in self.available_agents

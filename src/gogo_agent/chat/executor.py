@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import logging
+from datetime import datetime, timedelta, timezone
 from inspect import isawaitable, signature, Parameter
 from typing import AsyncContextManager, AsyncGenerator, Callable, Optional
 
@@ -30,7 +31,9 @@ from gogo_agent.booking.tools import ReviewPort, build_booking_toolkit
 from gogo_agent.travel.confirmation import ConfirmationError
 from gogo_agent.model import create_chat_model
 from gogo_agent.context.input import ModelInputContext
-from gogo_agent.context.preferences import get_preference_store
+from gogo_agent.context.preferences import get_preference_store, preferences_for_model
+from gogo_agent.context.reme import semantic_preferences
+from gogo_agent.context.reme_memory import remember_turn
 from gogo_agent.request_context import RequestContext, current_trace_id, trace_scope
 from gogo_agent.travel.dependencies import get_travel_service
 from gogo_agent.travel.tools import build_manage_toolkit
@@ -48,6 +51,7 @@ from .config import (
     load_chat_agent_settings, master_system_prompt, require_model_configuration,
 )
 from .repository import (
+    ActiveAgentRecord,
     AgentSessionStoreProtocol,
     create_agent_session_store,
     reply_transaction,
@@ -145,6 +149,7 @@ class ChatAgentExecutor:
         )
         self._settings = settings or load_chat_agent_settings()
         self._booking_service_factory = booking_service_factory
+        self._memory_tasks: set[asyncio.Task] = set()
 
     @property
     def history_service(self) -> ChatHistoryService:
@@ -192,6 +197,31 @@ class ChatAgentExecutor:
                     if isawaitable(closed):
                         await closed
 
+    def _schedule_memory_write(self, request: RequestContext, question: str, answer: str) -> None:
+        """主回复保存后后台抽取长期记忆；未配置 ReMe 或回复为空时跳过。"""
+        base_url = os.getenv("GOGO_REME_BASE_URL", "").strip()
+        if not base_url or not answer.strip():
+            return
+        task = asyncio.create_task(self._write_memory(request.user_id, question, answer, base_url))
+        self._memory_tasks.add(task)
+        task.add_done_callback(self._memory_tasks.discard)
+
+    async def _write_memory(self, user_id: str, question: str, answer: str, base_url: str) -> None:
+        """后台任务：模型或 ReMe 失败只记日志，不改变本轮已保存的回复。"""
+        model = None
+        try:
+            model = self._build_model(stream=False, role="recommendation")
+            await remember_turn(user_id, question, answer, base_url=base_url, model=model)
+        except Exception as exc:
+            logger.info("auto memory skipped: %s", type(exc).__name__)
+        finally:
+            if model is not None:
+                client = getattr(model, "client", None)
+                if client is not None:
+                    closed = client.close()
+                    if isawaitable(closed):
+                        await closed
+
     @staticmethod
     def _state_session_id(session_id: str, user_id: str) -> str:
         """用可信用户与会话构成无歧义的状态键，隔离同名会话。"""
@@ -221,10 +251,8 @@ class ChatAgentExecutor:
 
     def _input_middlewares(self, request: RequestContext, trace: ExecutionTrace | None) -> list[MiddlewareBase]:
         """每轮只召回本人有效偏好；闭包不保留跨用户缓存或被撤回的旧值。"""
-        context = ModelInputContext(request, preferences=lambda: [
-            {"key": item.key, "value": item.value, "source_message": item.source_message}
-            for item in get_preference_store().list(request.user_id)
-        ])
+        reme_url = os.getenv("GOGO_REME_BASE_URL", "").strip()
+        context = ModelInputContext(request, preferences=lambda: preferences_for_model(get_preference_store(), request.user_id), recall=(lambda query: semantic_preferences(request.user_id, query, base_url=reme_url)) if reme_url else None)
         return [context, trace] if trace is not None else [context]
 
     @staticmethod
@@ -555,6 +583,47 @@ class ChatAgentExecutor:
             kwargs["booking_turn"] = booking_turn
         return self._build_agent(**kwargs)
 
+    INTERRUPT_TTL = timedelta(minutes=10)
+    INTERRUPTED_REPLY = "已收到中断请求：本轮未执行任何 Agent 步骤，也未提交任何预订。需要时请重新发送。"
+
+    def request_interrupt(self, session_id: str, user_id: str) -> None:
+        """记录本人对会话的中断请求；只写路由标记，不取消其他进程里已经开始的步骤。"""
+        key = self._state_session_id(session_id, user_id)
+        now = datetime.now(timezone.utc)
+        current = self._session_store.load_active_agent(key)
+        # 已有活跃 Agent 时沿用其名称与有效期；只有标记时使用独立的短有效期。
+        keep_agent = current is not None and current.agent_name is not None
+        self._session_store.save_active_agent(key, ActiveAgentRecord(
+            agent_name=current.agent_name if keep_agent else None,
+            expires_at=current.expires_at if keep_agent else now + self.INTERRUPT_TTL,
+            interrupted_at=now,
+        ))
+
+    def _consume_interrupt(self, request: RequestContext) -> bool:
+        """消费待处理的中断标记，每次请求只生效一次；未过期时返回 True，调用方必须停止本轮执行。"""
+        key = self._state_session_id(request.session_id, request.user_id)
+        record = self._session_store.load_active_agent(key)
+        if record is None or record.interrupted_at is None:
+            return False
+        if record.agent_name is None:
+            self._session_store.delete_active_agent(key)
+        else:
+            self._session_store.save_active_agent(key, ActiveAgentRecord(
+                agent_name=record.agent_name, expires_at=record.expires_at,
+            ))
+        return record.expires_at > datetime.now(timezone.utc)
+
+    def _consume_interrupt_reply(self, request: RequestContext) -> tuple[str, str] | None:
+        """命中中断时只保存中断说明，不运行 Agent 也不进入预订；未命中返回 None。"""
+        with reply_transaction(self._history_service.repository, self._session_store):
+            if not self._consume_interrupt(request):
+                return None
+            msg_id = self._history_service.save_assistant_message(
+                conversation_id=request.session_id, user_id=request.user_id,
+                content=self.INTERRUPTED_REPLY, agent_name=self.COORDINATOR_AGENT_NAME,
+            )
+        return self.INTERRUPTED_REPLY, msg_id
+
     def _save_user_turn(self, session_id: str, user_id: str, message: str) -> RequestContext:
         """保存已鉴权消息后创建可信上下文，供两条入口共用。"""
         try:
@@ -620,6 +689,7 @@ class ChatAgentExecutor:
                     self._active_continuation.record_completed_agent(request, agent_name)
         except Exception as exc:
             raise HTTPException(503, f"活跃 Agent 回复保存失败（{type(exc).__name__}）") from None
+        self._schedule_memory_write(request, message, result.text)
         return result.text, msg_id
 
     async def _prepare_turn(self, request: RequestContext) -> PreparedIntentTurn:
@@ -641,7 +711,7 @@ class ChatAgentExecutor:
         trace: ExecutionTrace | None = None,
         booking_turn: BookingChatTurn | None = None,
     ) -> dict:
-        """保存可调试层级与分支，不保存密钥、原始模型响应或可信身份。"""
+        """保存可调试层级与分支，不保存密钥、原始模型响应或可信身份；预订确认凭据按设计保存在已鉴权会话的消息 extra 中，供服务端回读校验（见 booking/chat.py）。"""
         decision = prepared.decision
         extra = {"intent_pipeline": {
             "request_id": request.request_id,
@@ -705,6 +775,9 @@ class ChatAgentExecutor:
         """
         # 步骤 1：在 L1 保存原问题并完成 017 预处理；失败时不运行 Agent。
         request = self._save_user_turn(session_id, user_id, message)
+        interrupted = self._consume_interrupt_reply(request)
+        if interrupted is not None:
+            return interrupted
         with trace_scope(request):
             logger.info("chat turn started", extra={"trace_id": current_trace_id()})
             booking_turn = self._booking_turn(request, booking_confirmation_token)
@@ -794,6 +867,7 @@ class ChatAgentExecutor:
                 if info_states and not booking_states:
                     self._active_continuation.record_completed_agent(request, self.INFO_AGENT_NAME)
 
+            self._schedule_memory_write(request, prepared.effective_question.question, reply_text)
             return reply_text, msg_id
 
     async def stream_turn_sse(
@@ -815,6 +889,15 @@ class ChatAgentExecutor:
         request = self._save_user_turn(session_id, user_id, message)
         with trace_scope(request):
             logger.info("chat stream prepared", extra={"trace_id": current_trace_id()})
+            interrupted = self._consume_interrupt_reply(request)
+            if interrupted is not None:
+                text, msg_id = interrupted
+
+                async def interrupted_events() -> AsyncGenerator[str, None]:
+                    yield f"event: message\ndata: {text}\n\n"
+                    yield f"event: message_id\ndata: {msg_id}\n\n"
+
+                return self._traced_stream(request, interrupted_events())
             booking_turn = self._booking_turn(request, booking_confirmation_token)
             active_name = None if booking_turn.confirmed else self._active_agent_for_turn(request, message)
             if active_name is not None:
@@ -993,6 +1076,7 @@ class ChatAgentExecutor:
 
         # 步骤 6：发送消息 ID 的 SSE 完成事件
         yield f"event: message_id\ndata: {msg_id}\n\n"
+        self._schedule_memory_write(request, prepared.effective_question.question, full_reply_text)
         suggestions = await self.recommend_questions(
             prepared.effective_question.question, full_reply_text,
         )

@@ -17,15 +17,27 @@ def _isolate_plan_store() -> None:
 
 
 @pytest.fixture(autouse=True, scope="session")
-def _isolate_preferences(tmp_path_factory):
-    """长期偏好同样只写临时 SQLite，避免离线模型测试读取真实用户偏好。"""
+def _isolate_preferences():
+    """长期偏好默认写 Redis；测试统一使用进程内后端，避免读写真实用户偏好。真实 Redis 用例自行注入。"""
     from gogo_agent.context.preferences import get_preference_store
-    previous = os.environ.get("GOGO_PREFERENCE_DB")
-    os.environ["GOGO_PREFERENCE_DB"] = str(tmp_path_factory.mktemp("preferences") / "test.sqlite3")
+    previous = os.environ.get("GOGO_PREFERENCE_STORE")
+    os.environ["GOGO_PREFERENCE_STORE"] = "memory"
     get_preference_store.cache_clear()
     yield
     get_preference_store.cache_clear()
     if previous is None:
-        os.environ.pop("GOGO_PREFERENCE_DB", None)
+        os.environ.pop("GOGO_PREFERENCE_STORE", None)
     else:
-        os.environ["GOGO_PREFERENCE_DB"] = previous
+        os.environ["GOGO_PREFERENCE_STORE"] = previous
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _isolate_reme():
+    """长期记忆默认关闭；避免单测里的自动记忆后台任务连接真实 ReMe。真实用例自行传入 base_url。"""
+    previous = os.environ.get("GOGO_REME_BASE_URL")
+    os.environ["GOGO_REME_BASE_URL"] = ""
+    yield
+    if previous is None:
+        os.environ.pop("GOGO_REME_BASE_URL", None)
+    else:
+        os.environ["GOGO_REME_BASE_URL"] = previous

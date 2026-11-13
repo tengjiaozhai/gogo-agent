@@ -21,7 +21,7 @@ from gogo_agent.travel.models import TravelOrderStatus
 from gogo_agent.travel.service import BusinessError, TravelBusinessService
 
 from .models import (
-    DimensionWeights, PlanConditions, PlanPolicy, PlanStepName, PlanView, PreferenceScores,
+    DimensionWeights, PlanConditions, PlanPolicy, PlanView, PreferenceScores,
 )
 from .review import ApprovedTrip, SubjectiveAssessor
 from .review_flow import check_approved_order, review_outcome, review_proposal
@@ -275,10 +275,12 @@ def build_plan_toolkit(
             return _plan_failure(exc)
         except BusinessError as exc:
             return _fail(exc.code, str(exc))
+        plan = service.get(user_id, plan_id)
+        pending = next_step(plan.progress)
         return _ok({
             "review_id": final.review_id, "plan_version": final.plan_version,
-            "repair_attempts": service.get(user_id, plan_id).repair_attempts,
-            "next_step": PlanStepName.AWAIT_CONFIRMATION.value if not final.needs_rework else PlanStepName.COMPUTE_PROPOSALS.value,
+            "repair_attempts": plan.repair_attempts,
+            "next_step": pending.value if pending is not None else None,
             **review_outcome(final),
         }, "审核完成")
 

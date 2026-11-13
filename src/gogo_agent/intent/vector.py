@@ -32,7 +32,7 @@ class IntentVectorConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    qdrant_url: str = Field(default="http://172.22.22.123:6333", min_length=1, description="意图专用 Qdrant 服务地址")
+    qdrant_url: str = Field(default="http://121.43.231.155:6333", min_length=1, description="意图专用 Qdrant 服务地址")
     embedding_model: str = Field(default="qwen3.7-text-embedding", min_length=1, description="意图索引与查询必须共用的 embedding 模型名")
     dimensions: int = Field(default=1024, ge=1, description="embedding 输出向量维度，默认沿用 Java 基线")
     index_version: str = Field(default="1", min_length=1, description="人工提升的意图索引版本，变更时切换物理集合")

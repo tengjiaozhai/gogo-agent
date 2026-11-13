@@ -111,7 +111,7 @@ class RedisTokenStore:
 
     def __init__(
         self,
-        host: str = "172.22.22.123",
+        host: str = "121.43.231.155",
         port: int = 6379,
         db: int = 0,
         password: Optional[str] = None,
@@ -217,7 +217,7 @@ class TokenManager:
 def create_token_manager(prefer_redis: bool = True) -> TokenManager:
     """根据环境变量配置工厂方法创建 TokenManager，优先尝试连接 Redis 实现跨会话持久化。
 
-    - 默认连接 172.22.22.123:6379 (无密码, DB 0)
+    - 默认连接 121.43.231.155:6379 (无密码, DB 0)
     - 默认过期时间为 30 天 (2,592,000 秒)
     - 若 Redis 不可用或无法连接，自动平滑回退到 InMemoryTokenStore
     """
@@ -225,7 +225,7 @@ def create_token_manager(prefer_redis: bool = True) -> TokenManager:
     secret = os.environ.get("GOGO_AUTH_SECRET_KEY")
 
     if prefer_redis:
-        redis_host = os.environ.get("GOGO_REDIS_HOST", "172.22.22.123").strip()
+        redis_host = os.environ.get("GOGO_REDIS_HOST", "121.43.231.155").strip()
         redis_port = int(os.environ.get("GOGO_REDIS_PORT", "6379").strip())
         redis_db = int(os.environ.get("GOGO_REDIS_DB", "0").strip())
         redis_password = os.environ.get("GOGO_REDIS_PASSWORD", "").strip() or None

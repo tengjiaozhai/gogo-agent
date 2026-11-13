@@ -6,7 +6,7 @@ from contextvars import ContextVar
 from copy import deepcopy
 from typing import Optional, Protocol
 from agentscope.state import AgentState
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.orm import Session
 
 from .models import ChatConversation, ChatMessage
@@ -32,12 +32,26 @@ def _repository_session(factory, *, write=False):
 
 
 class ActiveAgentRecord(BaseModel):
-    """已鉴权用户会话中的活跃子 Agent 及其续聊有效期。"""
+    """已鉴权用户会话的路由记录：活跃子 Agent 及其续聊有效期，可附带待消费的中断标记。
+
+    仅有中断标记时 agent_name 为空；此时记录不授权任何续聊，只表示下一轮必须先消费中断。
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    agent_name: str = Field(..., min_length=1, description="可以直接续聊的已注册子 Agent 名称")
-    expires_at: AwareDatetime = Field(..., description="该活跃记录失效的 UTC 时间")
+    agent_name: str | None = Field(
+        default=None, min_length=1, description="可以直接续聊的已注册子 Agent 名称；仅有中断标记时为空",
+    )
+    expires_at: AwareDatetime = Field(..., description="该路由记录失效的 UTC 时间")
+    interrupted_at: AwareDatetime | None = Field(
+        default=None, description="用户请求中断的 UTC 时间；下一轮消费后清空",
+    )
+
+    @model_validator(mode="after")
+    def _requires_agent_or_interrupt(self) -> "ActiveAgentRecord":
+        if self.agent_name is None and self.interrupted_at is None:
+            raise ValueError("路由记录必须包含活跃 Agent 或中断标记")
+        return self
 
 
 class ChatHistoryRepositoryProtocol(Protocol):

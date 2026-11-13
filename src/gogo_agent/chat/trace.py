@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 from collections.abc import AsyncGenerator
 from contextlib import suppress
 
@@ -13,7 +14,10 @@ from agentscope.event import (
 )
 from agentscope.middleware import MiddlewareBase
 
+from gogo_agent.request_context import current_trace_id
 from gogo_agent.security.masking import SensitiveMasker
+
+logger = logging.getLogger(__name__)
 
 
 AGENT_LABELS = {
@@ -89,8 +93,11 @@ class ExecutionTrace(MiddlewareBase):
             async for event in next_handler(**input_kwargs):
                 await self._record(agent, event)
                 yield event
-        except BaseException:
-            # 不展示异常正文（供应商异常可能含凭证）；也不把失败进度画成成功。
+        except BaseException as exc:
+            # 不展示异常正文（供应商异常可能含凭证）；也不把失败进度画成成功。日志只记异常类型与追踪号。
+            if isinstance(exc, Exception):
+                logger.warning("智能体执行失败 trace=%s agent=%s error_type=%s",
+                               current_trace_id(), agent.name, type(exc).__name__)
             for item in self.timeline:
                 if item.get("agentName") == agent.name and item.get("status") == "in-progress":
                     item.update(status="error", result="执行未完成")
@@ -167,14 +174,23 @@ class ExecutionTrace(MiddlewareBase):
             result = self._raw.pop(key, "")
             failed = event.state != "success"
             waiting = False
+            error_code = None
             try:
                 payload = json.loads(result)
                 waiting = (event.state == "success" and isinstance(payload, dict)
                            and payload.get("errorCode") in {"CONFIRMATION_REQUIRED", "NEEDS_INPUT"})
                 failed = failed or (isinstance(payload, dict) and payload.get("success") is False)
+                if isinstance(payload, dict):
+                    error_code = payload.get("errorCode")
             except (ValueError, TypeError):
                 pass
-            item.update(status="pending" if waiting else "error" if failed else "done", result=mask_trace_text(result))
+            status = "pending" if waiting else "error" if failed else "done"
+            item.update(status=status, result=mask_trace_text(result))
+            if status == "error":
+                # 只记工具名、调用状态与上游错误码，不记响应正文。
+                logger.warning("工具调用失败 trace=%s agent=%s tool=%s state=%s code=%s",
+                               current_trace_id(), name, item["title"], getattr(event.state, "value", event.state),
+                               SensitiveMasker.mask(str(error_code)) if error_code is not None else "-")
             await self._progress(item, "tool_done")
 
     async def stream(self, source: AsyncGenerator[str, None]) -> AsyncGenerator[str, None]:

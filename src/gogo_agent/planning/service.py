@@ -202,7 +202,14 @@ class PlanService:
             )
         except ReviewError as exc:
             raise PlanError(exc.code, str(exc), exc.status) from None
-        progress = steps.complete(plan.progress, PlanStepName.REVIEW, data_version=plan.content_version)
+        if final.needs_rework:
+            # 审核不通过：REVIEW 不记为完成；计算及之后的步骤失效，重做起点是计算。结论与方案保留为证据，内容版本不变。
+            progress = steps.invalidate_from(plan.progress, PlanStepName.COMPUTE_PROPOSALS)
+        elif steps.can_complete(plan.progress, PlanStepName.REVIEW):
+            progress = steps.complete(plan.progress, PlanStepName.REVIEW, data_version=plan.content_version)
+        else:
+            # 整改后计算尚未重做：结论只作为证据保存，不能越过计算步骤推进审核。
+            progress = plan.progress
         after = plan.model_copy(update={"progress": progress, "last_review": final,
                                         "review_history": [*plan.review_history, final]})
         self._commit(user_id, plan, after, content_changed=False)

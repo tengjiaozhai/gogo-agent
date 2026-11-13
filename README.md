@@ -73,7 +73,7 @@ GOGO_TEST_MYSQL_URL="$TEST_DATABASE_URL" PYTHONPATH=src .venv/bin/python -m pyte
 PYTHONPATH=src .venv/bin/python scripts/demo_068_085_context.py --case all
 ```
 
-长期偏好在已认证的 `/api/preferences` 接口保存/更新/删除，默认持久化到本机 `~/.gogo-agent/preferences.sqlite3`；可用 `GOGO_PREFERENCE_DB` 指定文件。撤回后后续模型调用不再自动注入该值。此入口尚未接入前端页面。
+长期偏好在已认证的 `/api/preferences` 接口保存/更新/删除，权威存储为 Redis（`GOGO_REDIS_*`，键 `gogo:pref:{user_id}`）；Redis 不可用时返回 503。撤回后后续模型调用不再自动注入该值。此入口尚未接入前端页面。
 
 网页聊天预订已接通模拟供应商、结构化确认、门禁复验和三态结果回放，详见[BookingAgent 网页完整链路](docs/契约样例/预订Agent-网页完整链路调试.md)。零外部服务运行：
 

@@ -319,6 +319,8 @@ def _city(value: str) -> str:
         raise SkillError(SkillErrorCode.INVALID_ARGUMENT, f"城市名必须是 1 到 {_MAX_CITY_CHARS} 个字符")
     if any(ord(ch) < 32 for ch in value):
         raise SkillError(SkillErrorCode.INVALID_ARGUMENT, "城市名不能包含控制字符")
+    if any(mark in value for mark in ("/", "\\", "~", "..")):
+        raise SkillError(SkillErrorCode.INVALID_ARGUMENT, "城市名不能包含路径符号")
     return value.strip()
 
 

@@ -1,6 +1,6 @@
 """Redis token persistence integration test suite.
 
-验证真实连接 172.22.22.123:6379 的 Redis 跨会话存储：
+验证真实连接 121.43.231.155:6379 的 Redis 跨会话存储：
 1. 验证 Redis 节点连通性与探活 (PING)；
 2. 验证 Token 在 Redis 中的 30 天 (2,592,000 秒) TTL 与存储正确性；
 3. 验证跨实例/模拟服务重启后的 Token 持久化与有效读取；
@@ -21,7 +21,7 @@ from gogo_agent.auth.security import (
 @pytest.fixture
 def redis_store():
     """获取可用的 RedisTokenStore，若无法连接则跳过集成测试。"""
-    host = os.environ.get("GOGO_REDIS_HOST", "172.22.22.123").strip()
+    host = os.environ.get("GOGO_REDIS_HOST", "121.43.231.155").strip()
     port = int(os.environ.get("GOGO_REDIS_PORT", "6379").strip())
     store = RedisTokenStore(host=host, port=port, prefix="gogo:test:token:")
     if not store.ping():

@@ -41,8 +41,14 @@ def next_step(progress: PlanProgress) -> PlanStepName | None:
     return None
 
 
+def can_complete(progress: PlanProgress, step: PlanStepName) -> bool:
+    """前序步骤是否都已完成；为假时 complete(step) 会被顺序规则拒绝，调用方应只保存证据、不推进该步骤。计划已终止时同样抛出 PLAN_TERMINATED。"""
+    _require_active(progress)
+    return all(state.status == PlanStepStatus.COMPLETED for state in progress.steps[: _index(step)])
+
+
 def complete(progress: PlanProgress, step: PlanStepName, data_version: int) -> PlanProgress:
-    """标记步骤完成；前序步骤必须已完成，并记录其所基于的计划版本。"""
+    """标记步骤完成；前序步骤必须已完成，并记录其所基于的计划版本。成功即清零该步失败次数，之后的失败从 0 重新计数。"""
     _require_active(progress)
     updated = progress.model_copy(deep=True)
     for earlier in STEP_ORDER[: _index(step)]:
@@ -50,6 +56,7 @@ def complete(progress: PlanProgress, step: PlanStepName, data_version: int) -> P
             raise StepTransitionError("STEP_ORDER", f"步骤 {earlier.value} 尚未完成，不能完成 {step.value}")
     target = _state(updated, step)
     target.status = PlanStepStatus.COMPLETED
+    target.attempts = 0
     target.error = None
     target.data_version = data_version
     return updated

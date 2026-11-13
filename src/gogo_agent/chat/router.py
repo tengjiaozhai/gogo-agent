@@ -90,6 +90,22 @@ async def send_chat_message(
     return StreamingResponse(stream, media_type="text/event-stream")
 
 
+@router.post(
+    "/{sessionId}/interrupt",
+    summary="请求中断本会话的下一轮执行（只生效一次，不撤销已提交的预订）",
+)
+async def interrupt_conversation(
+    sessionId: str,
+    current_user: UserAccount = Depends(get_current_user),
+    history_service: ChatHistoryService = Depends(get_chat_history_service),
+    executor: ChatAgentExecutor = Depends(get_chat_executor),
+) -> dict[str, bool]:
+    """本人请求中断。先校验会话归属：不存在返回 404，他人会话返回 403，且两种情况都不写入任何标记。"""
+    history_service.get_history_messages(sessionId, current_user.user_id)
+    executor.request_interrupt(sessionId, current_user.user_id)
+    return {"interrupted": True}
+
+
 @router.put(
     "/{sessionId}/title",
     summary="更新会话标题",

@@ -69,7 +69,7 @@ def load_intent_runtime_settings() -> IntentRuntimeSettings:
         raise ValueError("GOGO_MODEL_BASE_URL 必须是完整的 HTTP(S) 网关根地址或 /v1 地址")
     base_url = root_url if root_url.endswith("/v1") else f"{root_url}/v1"
     vector = IntentVectorConfig(
-        qdrant_url=os.getenv("GOGO_INTENT_QDRANT_URL") or "http://172.22.22.123:6333",
+        qdrant_url=os.getenv("GOGO_INTENT_QDRANT_URL") or "http://121.43.231.155:6333",
         embedding_model=os.getenv("GOGO_INTENT_EMBEDDING_MODEL") or "qwen3.7-text-embedding",
         dimensions=int(os.getenv("GOGO_INTENT_EMBEDDING_DIMENSIONS") or "1024"),
         index_version=os.getenv("GOGO_INTENT_INDEX_VERSION") or "1",

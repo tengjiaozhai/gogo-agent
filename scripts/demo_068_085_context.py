@@ -20,15 +20,12 @@ from time import perf_counter
 
 from agentscope.message import Msg, SystemMsg, TextBlock, ToolResultBlock, UserMsg
 from agentscope.state import AgentState
-from sqlalchemy import Table, create_engine
-from typing import cast
-from sqlalchemy.orm import sessionmaker
 
 from gogo_agent.chat.config import master_system_prompt
 from gogo_agent.chat.executor import ChatAgentExecutor, _FallbackMockModel
 from gogo_agent.chat.repository import InMemoryAgentSessionStore
 from gogo_agent.context.input import ModelInputContext, PROMPT_VERSION
-from gogo_agent.context.preferences import PreferenceRow, PreferenceStore, PreferenceWrite
+from gogo_agent.context.preferences import InMemoryPreferenceStore, PreferenceWrite
 from gogo_agent.intent.models import IntentCategory, IntentItem, IntentResult, QueryInput, RecognitionDecision, ConfidenceLevel, RecognitionLayer
 from gogo_agent.intent.pipeline import PreparedIntentTurn
 from gogo_agent.planning.models import PlanConditions
@@ -199,23 +196,18 @@ async def reference():
 
 
 async def memory():
-    with TemporaryDirectory(prefix="gogo-g-preference-") as directory:
-        url = f"sqlite+pysqlite:///{directory}/preferences.sqlite3"
-        engine = create_engine(url)
-        cast(Table, PreferenceRow.__table__).create(engine)
-        store = PreferenceStore(sessionmaker(engine))
+    with TemporaryDirectory(prefix="gogo-g-preference-"):
+        backend: dict[str, dict[str, str]] = {}
+        store = InMemoryPreferenceStore(backend)
         store.put("alice", "transport", PreferenceWrite(value="高铁优先", source_message="以后优先高铁"))
-        engine.dispose()
-        engine = create_engine(url)
-        store = PreferenceStore(sessionmaker(engine))
+        store = InMemoryPreferenceStore(backend)
         assert store.list("bob") == []
         assert store.list("alice")[0].value == "高铁优先"
         store.put("alice", "transport", PreferenceWrite(value="飞机优先", source_message="改为飞机优先"))
         assert store.list("alice")[0].value == "飞机优先"
         store.delete("alice", "transport")
         assert store.list("alice") == []
-        engine.dispose()
-    return {"reopened_database": True, "bob_preferences": [], "updated": "飞机优先", "after_revoke": []}
+    return {"reopened_store": True, "bob_preferences": [], "updated": "飞机优先", "after_revoke": []}
 
 
 CASES = {"routes": routes, "prompt": prompt, "compress": compress, "repair": repair, "reference": reference, "memory": memory}
