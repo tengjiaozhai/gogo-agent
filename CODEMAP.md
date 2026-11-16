@@ -113,7 +113,7 @@
 - [`src/gogo_agent/context/input.py`](src/gogo_agent/context/input.py) — 为模型输入副本注入可信动态上下文、标记提示词版本并压缩重复只读回执。
 - [`src/gogo_agent/context/preferences.py`](src/gogo_agent/context/preferences.py) — 提供本人长期偏好的本机 SQL 存储、显式更新撤回与认证 HTTP 接口。
 - [`src/gogo_agent/context/reme.py`](src/gogo_agent/context/reme.py) — 只读检索本人 ReMe 历史偏好片段，每次强制 `digest/users/<hash>/` 前缀并在失败时降级为空。
-- [`src/gogo_agent/context/reme_memory.py`](src/gogo_agent/context/reme_memory.py) — 用轻量模型从本轮对话抽取本人长期事实，按 `digest/users/<hash>/` 前缀合并写入 ReMe；失败只降级不中断对话。
+- [`src/gogo_agent/context/reme_memory.py`](src/gogo_agent/context/reme_memory.py) — 用轻量模型从本轮对话抽取本人长期事实，按 `digest/users/<hash>/` 前缀经 `/stat`+`/save` 条件写入 ReMe（冲突重试、并发创建后校验）；超过 100 条的旧事实移入 `history/` 不参与召回；失败只降级不中断对话。
 
 ## src/gogo_agent/db
 

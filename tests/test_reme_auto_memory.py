@@ -59,11 +59,12 @@ def test_normalize_facts_drops_sensitive_long_and_duplicate():
 def test_merge_facts_appends_only_new_and_keeps_existing_dates():
     existing = "# 自动记忆\n\n- 2026-11-01 用户偏好乘坐国航\n"
 
-    body, added = reme_memory.merge_facts(
+    body, added, evicted = reme_memory.merge_facts(
         existing, ["用户偏好乘坐国航", "用户喜欢靠窗座位"], today="2026-11-13",
     )
 
     assert added == 1
+    assert evicted == []
     assert "- 2026-11-01 用户偏好乘坐国航" in body
     assert "- 2026-11-13 用户喜欢靠窗座位" in body
 
@@ -71,45 +72,54 @@ def test_merge_facts_appends_only_new_and_keeps_existing_dates():
 def test_merge_facts_keeps_only_the_most_recent_limit():
     existing = "# 自动记忆\n\n" + "".join(f"- 2026-11-01 事实{i}\n" for i in range(5))
 
-    body, added = reme_memory.merge_facts(existing, ["新事实"], today="2026-11-13", limit=3)
+    body, added, evicted = reme_memory.merge_facts(existing, ["新事实"], today="2026-11-13", limit=3)
 
     assert added == 1
     assert "事实0" not in body and "事实1" not in body and "事实2" not in body
     assert "事实3" in body and "事实4" in body and "新事实" in body
+    assert evicted == [
+        "- 2026-11-01 事实0", "- 2026-11-01 事实1", "- 2026-11-01 事实2",
+    ]
+
+
+def test_normalize_facts_counts_overflow_without_stopping_scan(caplog):
+    raw = [f"用户偏好第{i}项" for i in range(7)]
+
+    with caplog.at_level("WARNING"):
+        selected = reme_memory.normalize_facts(raw, limit=5)
+
+    assert selected == [f"用户偏好第{i}项" for i in range(5)]
+    assert "dropped=2" in caplog.text
 
 
 def test_remember_turn_writes_only_into_callers_own_prefix():
     model = _FixedModel(json.dumps({"facts": ["用户偏好乘坐国航", "用户喜欢靠窗座位"]}))
-    writes: list[dict] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/read":
-            return httpx.Response(200, json={"success": False, "answer": "file does not exist"})
-        if request.url.path == "/write":
-            writes.append(json.loads(request.content))
-            return httpx.Response(200, json={"success": True, "answer": "ok"})
-        raise AssertionError(f"unexpected path {request.url.path}")
-
-    transport, seen = _transport(handler)
+    fake = _FakeReme()
+    transport, _ = _transport(fake.handler)
 
     added = asyncio.run(reme_memory.remember_turn(
         "u001", "帮我查航班", "已为您查询。", base_url="http://reme.test",
         model=model, transport=transport,
     ))
 
+    main = user_memory_prefix("u001") + "auto-memory.md"
     assert added == 2
-    assert [request.url.path for request in seen] == ["/read", "/write"]
-    payload = writes[0]
-    assert payload["path"] == user_memory_prefix("u001") + "auto-memory.md"
-    assert payload["name"] == "auto-memory"
-    assert "用户偏好乘坐国航" in payload["content"]
-    assert "用户喜欢靠窗座位" in payload["content"]
+    assert [s["path"] for s in fake.saves] == [main]
+    assert "expected_mtime" not in fake.saves[0]  # 文件此前不存在
+    content = fake.files[main]
+    assert content.startswith("---\nname: auto-memory\n")
+    assert "用户偏好乘坐国航" in content
+    assert "用户喜欢靠窗座位" in content
 
 
 def test_remember_turn_refuses_to_overwrite_when_read_fails_unexpectedly():
     model = _FixedModel(json.dumps({"facts": ["用户偏好乘坐国航"]}))
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/stat":
+            return httpx.Response(200, json={"success": True, "answer": "ok", "metadata": {
+                "exists": True, "mtime": "2026-11-15T13:40:46.495873",
+            }})
         assert request.url.path == "/read"
         return httpx.Response(200, json={"success": False, "answer": "permission denied"})
 
@@ -164,3 +174,116 @@ def test_executor_schedules_memory_write_as_background_task(monkeypatch):
     asyncio.run(scenario())
 
     assert calls == [("u001", "问题", "答复", "http://reme.test")]
+
+
+class _FakeReme:
+    """内存版 ReMe 文件接口：/stat 返回 mtime，/save 校验 expected_mtime 并返回 file_conflict。"""
+
+    def __init__(self):
+        self.files: dict[str, str] = {}
+        self.mtimes: dict[str, str] = {}
+        self.saves: list[dict] = []
+        self.stats = 0
+        self.before_read = None
+        self._tick = 0
+
+    def bump(self, path: str) -> None:
+        self._tick += 1
+        self.mtimes[path] = f"2026-11-16T10:00:{self._tick:06d}"
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content) if request.content else {}
+        path = body.get("path")
+        if request.url.path == "/stat":
+            self.stats += 1
+            if path not in self.files:
+                return httpx.Response(200, json={"success": False, "answer": "not found", "metadata": {"exists": False}})
+            return httpx.Response(200, json={"success": True, "answer": "ok", "metadata": {
+                "exists": True, "mtime": self.mtimes[path],
+            }})
+        if request.url.path == "/read":
+            if self.before_read is not None:
+                self.before_read(path)
+            if path not in self.files:
+                return httpx.Response(200, json={"success": False, "answer": "Error: file does not exist"})
+            return httpx.Response(200, json={"success": True, "answer": self.files[path], "metadata": {}})
+        if request.url.path == "/save":
+            self.saves.append(body)
+            expected = body.get("expected_mtime")
+            if expected is not None and self.mtimes.get(path) != expected:
+                return httpx.Response(200, json={"success": False, "answer": "conflict",
+                                                 "metadata": {"code": "file_conflict"}})
+            self.files[path] = body["content"]
+            self.bump(path)
+            return httpx.Response(200, json={"success": True, "answer": "ok", "metadata": {}})
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+
+def test_write_conflict_rereads_and_merges_both_writers_facts():
+    fake = _FakeReme()
+    main = user_memory_prefix("u001") + "auto-memory.md"
+    fake.files[main] = "# 自动记忆\n\n- 2026-11-01 用户偏好乘坐国航\n"
+    fake.bump(main)
+    fired = {"done": False}
+
+    def other_writer(path: str) -> None:
+        # 在本进程 stat 之后、read 之前，另一个写入者追加了一条事实。
+        if path == main and not fired["done"]:
+            fired["done"] = True
+            fake.files[main] += "- 2026-11-02 用户住酒店偏好大床房\n"
+            fake.bump(main)
+
+    fake.before_read = other_writer
+    transport, _ = _transport(fake.handler)
+    model = _FixedModel(json.dumps({"facts": ["用户喜欢靠窗座位"]}))
+
+    added = asyncio.run(reme_memory.remember_turn(
+        "u001", "问题", "答复", base_url="http://reme.test", model=model, transport=transport,
+    ))
+
+    assert added == 1
+    assert fake.stats == 2  # 第一次 stat 后被冲突打回，重读一次
+    assert [s["path"] for s in fake.saves] == [main, main]
+    assert "expected_mtime" in fake.saves[0]
+    final = fake.files[main]
+    assert "用户偏好乘坐国航" in final
+    assert "用户住酒店偏好大床房" in final
+    assert "用户喜欢靠窗座位" in final
+
+
+def test_overflow_is_moved_to_history_and_not_left_in_recall_prefix():
+    fake = _FakeReme()
+    prefix = user_memory_prefix("u001")
+    main = prefix + "auto-memory.md"
+    history = "history/" + prefix.removeprefix("digest/") + "auto-memory-history.md"
+    fake.files[main] = "# 自动记忆\n\n" + "".join(
+        f"- 2026-11-01 旧事实{i}\n" for i in range(reme_memory.MAX_STORED_FACTS)
+    )
+    fake.bump(main)
+    transport, _ = _transport(fake.handler)
+    model = _FixedModel(json.dumps({"facts": ["用户喜欢靠窗座位"]}))
+
+    added = asyncio.run(reme_memory.remember_turn(
+        "u001", "问题", "答复", base_url="http://reme.test", model=model, transport=transport,
+    ))
+
+    assert added == 1
+    assert [s["path"] for s in fake.saves] == [history, main]  # 先落历史，后写主文件
+    assert "- 2026-11-01 旧事实0" in fake.files[history]
+    assert "- 2026-11-01 旧事实0\n" not in fake.files[main]
+    assert "- 2026-11-01 旧事实1\n" in fake.files[main]
+    assert history.startswith("history/") and not history.startswith("digest/")
+
+
+def test_history_append_is_idempotent_across_retries():
+    fake = _FakeReme()
+    history = "history/users/x/auto-memory-history.md"
+    fake.files[history] = "# 自动记忆历史\n\n- 2026-11-01 旧事实0\n"
+    fake.bump(history)
+    transport, _ = _transport(fake.handler)
+    client = httpx.Client(base_url="http://reme.test", transport=transport)
+
+    reme_memory._append_history(client, history, ["- 2026-11-01 旧事实0", "- 2026-11-01 旧事实1"])
+
+    lines = [line for line in fake.files[history].splitlines() if line.startswith("- ")]
+    assert lines == ["- 2026-11-01 旧事实0", "- 2026-11-01 旧事实1"]
