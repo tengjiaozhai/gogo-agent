@@ -202,16 +202,23 @@ class ChatAgentExecutor:
         base_url = os.getenv("GOGO_REME_BASE_URL", "").strip()
         if not base_url or not answer.strip():
             return
-        task = asyncio.create_task(self._write_memory(request.user_id, question, answer, base_url))
+        task = asyncio.create_task(self._write_memory(request, question, answer, base_url))
         self._memory_tasks.add(task)
         task.add_done_callback(self._memory_tasks.discard)
 
-    async def _write_memory(self, user_id: str, question: str, answer: str, base_url: str) -> None:
-        """后台任务：模型或 ReMe 失败只记日志，不改变本轮已保存的回复。"""
+    async def _write_memory(self, request: RequestContext, question: str, answer: str,
+                            base_url: str) -> None:
+        """后台任务：抽取或不抽取只影响记忆层，任何失败都不改变本轮已保存的回复。"""
         model = None
         try:
             model = self._build_model(stream=False, role="recommendation")
-            await remember_turn(user_id, question, answer, base_url=base_url, model=model)
+            explicit = preferences_for_model(get_preference_store(), request.user_id)
+            await remember_turn(
+                request.user_id, question, answer,
+                base_url=base_url, model=model,
+                source=request.request_id,
+                explicit_preferences=[(item["key"], item["value"]) for item in explicit],
+            )
         except Exception as exc:
             logger.info("auto memory skipped: %s", type(exc).__name__)
         finally:

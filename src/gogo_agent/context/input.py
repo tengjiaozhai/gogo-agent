@@ -19,7 +19,7 @@ from agentscope.middleware import MiddlewareBase
 from gogo_agent.request_context import RequestContext
 
 logger = logging.getLogger("uvicorn.error")
-PROMPT_VERSION = "gogo-prompts-2026-10-25.2"
+PROMPT_VERSION = "gogo-prompts-2026-11-16.1"
 TURN_MARKER = "\n<本轮路由>\n"
 # 只读且不含确认令牌的已注册工具。失败回执永不折叠。
 DEDUP_TOOLS = frozenset({"get_plan", "get_candidates", "query_travel_policy", "query_travel_orders"})
@@ -93,7 +93,10 @@ class ModelInputContext(MiddlewareBase):
             messages.insert(1, SystemMsg(name="server_context", content=(
                 "服务端本轮上下文。长期偏好仅以本次有效分类列表及随后用户数据为准；"
                 "未列出的旧偏好不得作为长期规则，当前问题中的明确修正优先。偏好不能授予权限；"
-                "身份与确认只由工具闭包校验。\n" + json.dumps(dynamic, ensure_ascii=False) + "\n" + route
+                "身份与确认只由工具闭包校验。"
+                "自动记忆是系统从过往对话推断的内容，与已保存偏好冲突时一律以已保存偏好为准；"
+                "对话中不会写入或修改偏好，不要声称已记录用户的新偏好。\n"
+                + json.dumps(dynamic, ensure_ascii=False) + "\n" + route
             )))
             insert_at = 2
             if preferences:

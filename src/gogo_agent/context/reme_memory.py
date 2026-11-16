@@ -23,14 +23,18 @@ from agentscope.model import ChatModelBase, ChatResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from gogo_agent.context.reme import user_memory_prefix
+from gogo_agent.context.memory_actions import (
+    MAX_STORED_FACTS,
+    apply_actions,
+    decide_actions,
+    normalize_facts,
+    parse_entries,
+)
 from gogo_agent.security.masking import SensitiveMasker
 
 logger = logging.getLogger("uvicorn.error")
 
 MEMORY_FILE_NAME = "auto-memory.md"
-MAX_FACTS_PER_TURN = 5
-MAX_FACT_CHARS = 80
-MAX_STORED_FACTS = 100
 MAX_WRITE_ATTEMPTS = 3
 HISTORY_FILE_NAME = "auto-memory-history.md"
 _MEMORY_DOC_NAME = "auto-memory"
@@ -38,7 +42,6 @@ _MEMORY_DOC_DESCRIPTION = "由对话自动抽取的本人长期记忆，可撤�
 _HISTORY_DOC_NAME = "auto-memory-history"
 _HISTORY_DOC_DESCRIPTION = "被上限挤出的本人长期记忆历史，不参与语义召回"
 _EXTRACTION_TIMEOUT_SECONDS = 8.0
-_SENSITIVE_MARKERS = ("密码", "密钥", "验证码", "身份证", "银行卡", "api key", "token", "secret")
 _FACT_LINE = re.compile(r"^- (?:(\d{4}-\d{2}-\d{2}) )?(.+)$")
 
 _PROMPT = (
@@ -62,35 +65,6 @@ class AutoMemoryOutput(BaseModel):
         default_factory=list,
         description="本轮可长期保存的用户事实，每项为一句以“用户”开头的第三人称陈述",
     )
-
-
-def normalize_facts(raw: list[str], *, limit: int = MAX_FACTS_PER_TURN) -> list[str]:
-    """清洗模型输出：只保留长度合适的字符串，去掉敏感内容和重复事实。"""
-    selected: list[str] = []
-    seen: set[str] = set()
-    overflow = 0
-    for item in raw:
-        if not isinstance(item, str):
-            continue
-        fact = re.sub(r"\s+", " ", item).strip()
-        if not fact or len(fact) > MAX_FACT_CHARS:
-            continue
-        lowered = fact.casefold()
-        if any(marker in lowered for marker in _SENSITIVE_MARKERS):
-            continue
-        if SensitiveMasker.mask(fact) != fact:
-            # 含手机号、证件号、邮箱或密钥等可识别信息时整条丢弃，不保存遮盖后的残缺事实。
-            continue
-        if lowered in seen:
-            continue
-        seen.add(lowered)
-        if len(selected) >= limit:
-            overflow += 1
-            continue
-        selected.append(fact)
-    if overflow:
-        logger.warning("auto memory facts over per-turn limit dropped=%d limit=%d", overflow, limit)
-    return selected
 
 
 def _render_line(day: str | None, fact: str) -> str:
@@ -238,23 +212,38 @@ def _append_history(client: httpx.Client, path: str, lines: list[str]) -> None:
         _verify_created(client, path, new)
 
 
-def _write_merged(client: httpx.Client, path: str, history_path: str,
-                  facts: list[str], today: str) -> int:
-    """读-合并-条件写；文件在读写之间被改动时重读重合并，最多尝试 MAX_WRITE_ATTEMPTS 次。"""
+async def _write_merged(client: httpx.Client, path: str, history_path: str, question: str,
+                        answer: str, *, model: ChatModelBase, today: str,
+                        source: str | None,
+                        explicit_preferences: list[tuple[str, str]]) -> int:
+    """读-判动作-条件写；文件在读写之间被改动时重读并重新判定，最多尝试 MAX_WRITE_ATTEMPTS 次。
+
+    动作判定放在重试循环内：冲突后条目集合已变，按新集合重新判定才符合"重放到新状态"。
+    不重新调用模型以外的开销，因为本函数本身就是一次模型调用。
+    """
     for attempt in range(1, MAX_WRITE_ATTEMPTS + 1):
         try:
             existing, mtime = _read_existing(client, path)
-            body, added, evicted = merge_facts(existing or "", facts, today=today)
-            if added == 0:
+            entries = parse_entries(existing or "")
+            decision = await decide_actions(
+                model, entries, question, answer,
+                explicit_preferences=explicit_preferences,
+            )
+            if decision.error is not None or not decision.actions:
                 return 0
-            if evicted:
-                logger.info("auto memory evicted over limit count=%d", len(evicted))
-                _append_history(client, history_path, evicted)
+            change = apply_actions(
+                entries, list(decision.actions), utterance=question, today=today, source=source,
+            )
+            if change.applied == 0:
+                return 0
+            if change.evicted:
+                logger.info("auto memory retired count=%d", len(change.evicted))
+                _append_history(client, history_path, list(change.evicted))
             _write_document(client, path, name=_MEMORY_DOC_NAME, description=_MEMORY_DOC_DESCRIPTION,
-                            body=body, expected_mtime=mtime)
+                            body=change.body, expected_mtime=mtime)
             if mtime is None:
-                _verify_created(client, path, [line for line in body.splitlines() if line.startswith("- ")])
-            return added
+                _verify_created(client, path, [line for line in change.body.splitlines() if line.startswith("- ")])
+            return change.applied
         except _WriteConflict:
             logger.info("auto memory write conflict attempt=%d", attempt)
     raise RuntimeError("自动记忆写入冲突次数超过上限")
@@ -279,8 +268,10 @@ async def remember_turn(
     now: datetime | None = None,
     timeout_seconds: float = _EXTRACTION_TIMEOUT_SECONDS,
     transport: httpx.BaseTransport | None = None,
+    source: str | None = None,
+    explicit_preferences: list[tuple[str, str]] | None = None,
 ) -> int:
-    """从一轮对话抽取并写入本人记忆，返回新增条数；任何运行时失败都降级为 0。"""
+    """从一轮对话判定并写入本人记忆，返回实际变更条数；任何运行时失败都降级为 0。"""
     if not user_id or not user_id.strip():
         raise ValueError("自动记忆必须提供用户标识")
     if not base_url.strip():
@@ -292,18 +283,20 @@ async def remember_turn(
     history_path = f"history/{prefix.removeprefix('digest/')}{HISTORY_FILE_NAME}"
     today = (now or datetime.now(timezone.utc)).astimezone(ZoneInfo("Asia/Shanghai")).date().isoformat()
     try:
-        facts = await extract_facts(model, question, answer, timeout_seconds=timeout_seconds)
-        if not facts:
-            return 0
         async with _lock_for(user_id):
             with httpx.Client(
                 base_url=base_url, timeout=timeout_seconds, trust_env=False, transport=transport,
             ) as client:
-                added = _write_merged(client, path, history_path, facts, today)
-        if added == 0:
+                changed = await _write_merged(
+                    client, path, history_path, question, answer,
+                    model=model, today=today, source=source,
+                    explicit_preferences=list(explicit_preferences or []),
+                )
+        if changed == 0:
             return 0
-        logger.info("auto memory stored user_hash=%s added=%d", hashlib.sha256(user_id.encode()).hexdigest()[:8], added)
-        return added
+        logger.info("auto memory stored user_hash=%s changed=%d",
+                    hashlib.sha256(user_id.encode()).hexdigest()[:8], changed)
+        return changed
     except Exception as exc:  # 自动记忆只是增强层，任何失败都不影响已保存的回复
         logger.warning("auto memory skipped: %s", SensitiveMasker.mask(f"{type(exc).__name__}: {exc}") or "")
         return 0

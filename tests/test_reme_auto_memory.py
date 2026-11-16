@@ -56,30 +56,34 @@ def test_normalize_facts_drops_sensitive_long_and_duplicate():
     assert reme_memory.normalize_facts(raw) == ["用户偏好乘坐国航。", "用户喜欢靠窗座位"]
 
 
-def test_merge_facts_appends_only_new_and_keeps_existing_dates():
-    existing = "# 自动记忆\n\n- 2026-11-01 用户偏好乘坐国航\n"
+def test_write_keeps_existing_lines_and_appends_only_new_facts():
+    """动作协议下，等价行为由 ADD 动作承担：已存在的条目不再重复写入。"""
+    from gogo_agent.context import memory_actions as ma
 
-    body, added, evicted = reme_memory.merge_facts(
-        existing, ["用户偏好乘坐国航", "用户喜欢靠窗座位"], today="2026-11-13",
+    entries = ma.parse_entries("# 自动记忆\n\n- 2026-11-01 用户偏好乘坐国航\n")
+    change = ma.apply_actions(
+        entries,
+        [ma.Action(ma.ADD, None, "用户偏好乘坐国航"), ma.Action(ma.ADD, None, "用户喜欢靠窗座位")],
+        utterance="", today="2026-11-13",
     )
 
-    assert added == 1
-    assert evicted == []
-    assert "- 2026-11-01 用户偏好乘坐国航" in body
-    assert "- 2026-11-13 用户喜欢靠窗座位" in body
+    assert change.applied == 1  # 重复的那条视为无变化
+    assert "用户偏好乘坐国航" in change.body
+    assert "2026-11-13 用户喜欢靠窗座位" in change.body
 
 
-def test_merge_facts_keeps_only_the_most_recent_limit():
-    existing = "# 自动记忆\n\n" + "".join(f"- 2026-11-01 事实{i}\n" for i in range(5))
+def test_actions_evict_oldest_entries_beyond_limit():
+    from gogo_agent.context import memory_actions as ma
 
-    body, added, evicted = reme_memory.merge_facts(existing, ["新事实"], today="2026-11-13", limit=3)
+    entries = ma.parse_entries("# 自动记忆\n\n" + "".join(f"- 2026-11-01 事实{i}\n" for i in range(5)))
+    change = ma.apply_actions(
+        entries, [ma.Action(ma.ADD, None, "新事实")], utterance="", today="2026-11-13", limit=3,
+    )
 
-    assert added == 1
-    assert "事实0" not in body and "事实1" not in body and "事实2" not in body
-    assert "事实3" in body and "事实4" in body and "新事实" in body
-    assert evicted == [
-        "- 2026-11-01 事实0", "- 2026-11-01 事实1", "- 2026-11-01 事实2",
-    ]
+    assert "事实0" not in change.body and "事实1" not in change.body and "事实2" not in change.body
+    assert "事实3" in change.body and "事实4" in change.body and "新事实" in change.body
+    assert [line.split(" ")[2] for line in change.evicted] == ["事实0", "事实1", "事实2"]
+    assert all("reason:evicted" in line for line in change.evicted)
 
 
 def test_normalize_facts_counts_overflow_without_stopping_scan(caplog):
@@ -93,7 +97,10 @@ def test_normalize_facts_counts_overflow_without_stopping_scan(caplog):
 
 
 def test_remember_turn_writes_only_into_callers_own_prefix():
-    model = _FixedModel(json.dumps({"facts": ["用户偏好乘坐国航", "用户喜欢靠窗座位"]}))
+    model = _FixedModel(json.dumps({"actions": [
+        {"action": "ADD", "content": "用户偏好乘坐国航"},
+        {"action": "ADD", "content": "用户喜欢靠窗座位"},
+    ]}))
     fake = _FakeReme()
     transport, _ = _transport(fake.handler)
 
@@ -113,7 +120,7 @@ def test_remember_turn_writes_only_into_callers_own_prefix():
 
 
 def test_remember_turn_refuses_to_overwrite_when_read_fails_unexpectedly():
-    model = _FixedModel(json.dumps({"facts": ["用户偏好乘坐国航"]}))
+    model = _FixedModel(json.dumps({"actions": [{"action": "ADD", "content": "用户偏好乘坐国航"}]}))
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/stat":
@@ -130,18 +137,21 @@ def test_remember_turn_refuses_to_overwrite_when_read_fails_unexpectedly():
     )) == 0
 
 
-def test_remember_turn_skips_http_when_model_returns_no_facts():
-    model = _FixedModel(json.dumps({"facts": []}))
-    transport, seen = _transport(lambda _request: pytest.fail("不应发出 HTTP 请求"))
+def test_remember_turn_reads_state_and_writes_nothing_when_model_returns_no_actions():
+    """动作协议下必须先读现有条目才能判定动作；空动作时不写文件。"""
+    model = _FixedModel(json.dumps({"actions": []}))
+    fake = _FakeReme()
 
     assert asyncio.run(reme_memory.remember_turn(
-        "u001", "问题", "答复", base_url="http://reme.test", model=model, transport=transport,
+        "u001", "问题", "答复", base_url="http://reme.test", model=model,
+        transport=_transport(fake.handler)[0],
     )) == 0
-    assert seen == []
+    assert fake.saves == []  # 只读不写
+    assert fake.stats == 1
 
 
 def test_remember_turn_rejects_blank_user_before_any_call():
-    model = _FixedModel(json.dumps({"facts": ["用户偏好乘坐国航"]}))
+    model = _FixedModel(json.dumps({"actions": [{"action": "ADD", "content": "用户偏好乘坐国航"}]}))
 
     with pytest.raises(ValueError):
         asyncio.run(reme_memory.remember_turn(
@@ -154,16 +164,21 @@ def test_executor_schedules_memory_write_as_background_task(monkeypatch):
     from gogo_agent.chat import executor as executor_module
     from gogo_agent.request_context import RequestContext
 
-    calls: list[tuple[str, str, str, str]] = []
+    calls: list[tuple[str, str, str, str, str | None]] = []
 
-    async def fake_remember(user_id, question, answer, *, base_url, model):
-        calls.append((user_id, question, answer, base_url))
+    async def fake_remember(user_id, question, answer, *, base_url, model, source=None,
+                            explicit_preferences=None):
+        calls.append((user_id, question, answer, base_url, source))
 
     monkeypatch.setattr(executor_module, "remember_turn", fake_remember)
+    # 偏好读取不得连真实 Redis：本用例只验证后台调度与参数传递。
+    monkeypatch.setattr(executor_module, "preferences_for_model",
+                        lambda _store, _user: [{"key": "seat", "value": "aisle"}])
+    monkeypatch.setattr(executor_module, "get_preference_store", lambda: object())
     monkeypatch.setenv("GOGO_REME_BASE_URL", "http://reme.test")
     executor = object.__new__(executor_module.ChatAgentExecutor)
     executor._memory_tasks = set()
-    executor._build_model = lambda **_kwargs: object()
+    executor._build_model = lambda stream=False, *, role="master": object()
     request = RequestContext(user_id="u001", session_id="s-1", request_id="r-1")
 
     async def scenario() -> None:
@@ -173,7 +188,8 @@ def test_executor_schedules_memory_write_as_background_task(monkeypatch):
 
     asyncio.run(scenario())
 
-    assert calls == [("u001", "问题", "答复", "http://reme.test")]
+    # 后台写入必须带上本轮 request_id 作为来源，供历史行追溯。
+    assert calls == [("u001", "问题", "答复", "http://reme.test", "r-1")]
 
 
 class _FakeReme:
@@ -235,7 +251,7 @@ def test_write_conflict_rereads_and_merges_both_writers_facts():
 
     fake.before_read = other_writer
     transport, _ = _transport(fake.handler)
-    model = _FixedModel(json.dumps({"facts": ["用户喜欢靠窗座位"]}))
+    model = _FixedModel(json.dumps({"actions": [{"action": "ADD", "content": "用户喜欢靠窗座位"}]}))
 
     added = asyncio.run(reme_memory.remember_turn(
         "u001", "问题", "答复", base_url="http://reme.test", model=model, transport=transport,
@@ -261,7 +277,7 @@ def test_overflow_is_moved_to_history_and_not_left_in_recall_prefix():
     )
     fake.bump(main)
     transport, _ = _transport(fake.handler)
-    model = _FixedModel(json.dumps({"facts": ["用户喜欢靠窗座位"]}))
+    model = _FixedModel(json.dumps({"actions": [{"action": "ADD", "content": "用户喜欢靠窗座位"}]}))
 
     added = asyncio.run(reme_memory.remember_turn(
         "u001", "问题", "答复", base_url="http://reme.test", model=model, transport=transport,
@@ -270,8 +286,9 @@ def test_overflow_is_moved_to_history_and_not_left_in_recall_prefix():
     assert added == 1
     assert [s["path"] for s in fake.saves] == [history, main]  # 先落历史，后写主文件
     assert "- 2026-11-01 旧事实0" in fake.files[history]
-    assert "- 2026-11-01 旧事实0\n" not in fake.files[main]
-    assert "- 2026-11-01 旧事实1\n" in fake.files[main]
+    assert "reason:evicted" in fake.files[history]
+    assert "2026-11-01 旧事实0 " not in fake.files[main]
+    assert "2026-11-01 旧事实1 " in fake.files[main]
     assert history.startswith("history/") and not history.startswith("digest/")
 
 
