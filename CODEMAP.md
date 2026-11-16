@@ -111,10 +111,11 @@
 
 - [`src/gogo_agent/context/__init__.py`](src/gogo_agent/context/__init__.py) — 标记模型输入转换与长期偏好模块。
 - [`src/gogo_agent/context/cue_guard.py`](src/gogo_agent/context/cue_guard.py) — 纯函数改口词守卫：判定本轮原话是否含改口词，决定能否把旧条目判为 REPLACE；生产代码与评测共用同一词表。
-- [`src/gogo_agent/context/input.py`](src/gogo_agent/context/input.py) — 为模型输入副本注入可信动态上下文、标记提示词版本并压缩重复只读回执。
+- [`src/gogo_agent/context/input.py`](src/gogo_agent/context/input.py) — 为模型输入副本注入可信动态上下文、声明自动记忆低于显式偏好的优先级、标记提示词版本并压缩重复只读回执。
+- [`src/gogo_agent/context/memory_actions.py`](src/gogo_agent/context/memory_actions.py) — 自动记忆的事实与动作层：事实清洗（长度/敏感/去重）、条目解析与身份标识、ADD/NOOP/REFINE/REPLACE 校验与状态转换、退役行渲染、单次动作决策调用；纯计算，不做 I/O。
 - [`src/gogo_agent/context/preferences.py`](src/gogo_agent/context/preferences.py) — 提供本人长期偏好的本机 SQL 存储、显式更新撤回与认证 HTTP 接口。
 - [`src/gogo_agent/context/reme.py`](src/gogo_agent/context/reme.py) — 只读检索本人 ReMe 历史偏好片段，每次强制 `digest/users/<hash>/` 前缀并在失败时降级为空。
-- [`src/gogo_agent/context/reme_memory.py`](src/gogo_agent/context/reme_memory.py) — 用轻量模型从本轮对话抽取本人长期事实，按 `digest/users/<hash>/` 前缀经 `/stat`+`/save` 条件写入 ReMe（冲突重试、并发创建后校验）；超过 100 条的旧事实移入 `history/` 不参与召回；失败只降级不中断对话。
+- [`src/gogo_agent/context/reme_memory.py`](src/gogo_agent/context/reme_memory.py) — 读取本人现有条目、判定动作并按 `digest/users/<hash>/` 前缀经 `/stat`+`/save` 条件写入（冲突重读后重新判定、并发创建后校验）；被替代/细化/挤出的条目写入 `history/` 不参与召回；失败只降级不中断对话。
 
 ## src/gogo_agent/db
 
@@ -331,9 +332,12 @@
 
 ## evals/auto_memory
 
-- [`evals/auto_memory/README.md`](evals/auto_memory/README.md) — 说明自动记忆评测的标注规则、指标、局限与运行方式；规则层不调用模型。
+- [`evals/auto_memory/README.md`](evals/auto_memory/README.md) — 说明自动记忆评测的标注规则、指标、局限与运行方式；规则层不调用模型，模型层需 `--run`。
 - [`evals/auto_memory/cases/cue_guard.jsonl`](evals/auto_memory/cases/cue_guard.jsonl) — 改口词守卫标注集（37 条，作者起草未复核），含应替换、不应替换、待定与跨轮样例。
-- [`evals/auto_memory/run_cue_guard.py`](evals/auto_memory/run_cue_guard.py) — 规则层评测：用设计基线的改口词计算漏判率与误判率，输出分类别结果、词项诊断与明细；纯标准库，不读写 ReMe。
+- [`evals/auto_memory/cases/actions.jsonl`](evals/auto_memory/cases/actions.jsonl) — 动作判定标注集（40 条），覆盖新增/无操作/细化/替代/不记录及边界情形，按内容哈希生成与生产一致的条目 id。
+- [`evals/auto_memory/cases/conflict_notice.jsonl`](evals/auto_memory/cases/conflict_notice.jsonl) — 主模型冲突提示标注集（10 条），标明每条是否应提示以及判定的关键词。
+- [`evals/auto_memory/run_cue_guard.py`](evals/auto_memory/run_cue_guard.py) — 规则层评测：导入生产模块的改口词计算漏判率与误判率，输出分类别结果、词项诊断与明细；纯标准库，不读写 ReMe。
+- [`evals/auto_memory/run_model_eval.py`](evals/auto_memory/run_model_eval.py) — 模型层评测：动作一致率、守卫后误替代率、输出截断与主模型冲突提示率；默认空跑，`--run` 才调用网关。
 
 ## output
 
@@ -353,8 +357,9 @@
 - [`tests/test_agent_state_storage.py`](tests/test_agent_state_storage.py) — 验证 AgentState 方言类型、旧表扩容与幂等，以及隔离 MySQL/MariaDB 中超过 64 KiB 状态的读回和 JSON/SSE 保存。
 - [`tests/test_068_085_context.py`](tests/test_068_085_context.py) — 验证真实 SDK 输入转换、结构化失败、两轮修订、候选隔离过期及显式偏好的认证和撤回。
 - [`tests/test_reme_recall.py`](tests/test_reme_recall.py) — 用本机临时 ReMe 实例验证本人隔离与 top_k，并用静默套接字与 MockTransport 验证停服、超时、请求前缀和异常降级。
-- [`tests/test_reme_auto_memory.py`](tests/test_reme_auto_memory.py) — 验证自动记忆的事实清洗、去重合并、条件写冲突重合并、并发创建校验、超限挤出到历史文件与历史追加幂等。
+- [`tests/test_reme_auto_memory.py`](tests/test_reme_auto_memory.py) — 验证动作判定的读取-写入链路、条件写冲突后重新判定、并发创建校验、退役条目写入历史、历史追加幂等与后台调度传参。
 - [`tests/test_cue_guard.py`](tests/test_cue_guard.py) — 验证改口词守卫的基线词表、命中判定与"只看关键词不做主题判断"的边界。
+- [`tests/test_memory_actions.py`](tests/test_memory_actions.py) — 验证条目解析与渲染互逆、动作契约校验（未知/重复 id、敏感内容、每轮上限）、四类动作的状态转换、守卫降级与上下文截断。
 - [`tests/test_booking_chat.py`](tests/test_booking_chat.py) — 验证网页预订的认证确认、实际主子委派、门禁、幂等、失败恢复、未知结果与历史回放。
 - [`tests/test_booking_auto_review.py`](tests/test_booking_auto_review.py) — 验证预订准备时自动审核：未审核计划自动审核后出卡，fail 不出卡并记入 denials，warning 不阻止预订并作为审核建议随确认卡展示。
 - [`tests/test_review_outcome_warnings.py`](tests/test_review_outcome_warnings.py) — 验证审核摘要的警告同时包含客观层与仲裁层、保持顺序并去重，阻塞项只来自仲裁 fail。

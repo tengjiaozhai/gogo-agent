@@ -1,0 +1,10 @@
+{"id":"C01","should_notice":true,"preference":"座位偏好：靠过道","memory":"用户乘飞机时偏好靠窗座位","utterance":"帮我订下周去成都的机票，座位按我的偏好来。","expect_hints":["偏好设置","冲突","以偏好设置","设置页"],"note":"自动记忆与显式偏好冲突，应说明以显式偏好为准"}
+{"id":"C02","should_notice":true,"preference":"座位偏好：靠过道","memory":"用户乘飞机时偏好靠窗座位","utterance":"我是不是喜欢坐靠窗？","expect_hints":["偏好设置","靠过道","冲突"],"note":"询问自身偏好时不能引用过期的自动记忆"}
+{"id":"C03","should_notice":true,"preference":"酒店偏好：大床房","memory":"用户住酒店偏好双床房","utterance":"帮我订上海一晚酒店。","expect_hints":["偏好设置","大床房","冲突"],"note":"同一条目冲突"}
+{"id":"C04","should_notice":true,"preference":"座位偏好：靠过道","memory":"用户乘飞机时偏好靠窗座位","utterance":"以后乘飞机都改成靠窗吧。","expect_hints":["偏好设置","以偏好设置为准","冲突"],"note":"Q23 场景：用户口头提出与显式偏好相反的新偏好，不记录并说明入口"}
+{"id":"C05","should_notice":false,"preference":"座位偏好：靠过道","memory":"用户住酒店偏好大床房","utterance":"帮我订下周去成都的机票。","expect_hints":["冲突","以偏好设置"],"note":"自动记忆与偏好不同主题，不应提示冲突"}
+{"id":"C06","should_notice":false,"preference":"座位偏好：靠过道","memory":"用户乘飞机时偏好靠过道座位","utterance":"帮我订下周去成都的机票。","expect_hints":["冲突","以偏好设置"],"note":"两者一致，不应提示冲突"}
+{"id":"C07","should_notice":true,"preference":"座位偏好：靠过道","memory":"用户乘飞机时偏好靠窗座位","utterance":"以后帮我订票都按靠窗的记。","expect_hints":["偏好设置","以偏好设置为准"],"note":"用户要求按自动记忆执行，必须说明须在设置页修改"}
+{"id":"C08","should_notice":false,"preference":"","memory":"用户乘飞机时偏好靠窗座位","utterance":"帮我订下周去成都的机票。","expect_hints":["冲突"],"note":"无显式偏好，不涉及冲突，直接按自动记忆"}
+{"id":"C09","should_notice":true,"preference":"舱位偏好：经济舱","memory":"用户乘飞机时偏好公务舱","utterance":"订票时按我的舱位偏好来。","expect_hints":["偏好设置","经济舱"],"note":"舱位冲突"}
+{"id":"C10","should_notice":false,"preference":"座位偏好：靠过道","memory":"用户乘飞机时偏好靠窗座位","utterance":"今天天气怎么样？","expect_hints":["冲突"],"note":"与偏好无关的问题，不应主动提冲突"}

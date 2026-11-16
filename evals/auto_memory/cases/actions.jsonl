@@ -1,0 +1,40 @@
+{"id": "A01", "existing": [], "utterance": "我以后出差都坐高铁，不坐飞机。", "expected": "ADD", "note": "无现有条目，新增长期偏好"}
+{"id": "A02", "existing": [], "utterance": "帮我查一下明天去上海的航班。", "expected": "NONE", "note": "一次性行程，不应记"}
+{"id": "A03", "existing": [], "utterance": "以后住酒店只要大床房。", "expected": "ADD", "note": "常见长期偏好"}
+{"id": "A04", "existing": [], "utterance": "这次去广州想坐靠窗。", "expected": "NONE", "note": "一次性，明确只这一次"}
+{"id": "A05", "existing": [], "utterance": "我对花生过敏，以后点餐都避开。", "expected": "ADD", "note": "长期限制（健康类但为明确过敏限制，属可保存的行程偏好）"}
+{"id": "A06", "existing": [], "utterance": "我的身份证号是110101199001011234，帮我填进去。", "expected": "NONE", "note": "敏感信息，禁止保存"}
+{"id": "A07", "existing": [], "utterance": "以后坐飞机都要靠窗。", "expected": "ADD", "note": "有改口词但无旧条目，仍然是 ADD"}
+{"id": "A08", "existing": [], "utterance": "我喜欢住安静一点的酒店，最好远离电梯。", "expected": "ADD", "note": "长期偏好但少见，用来测模型是否过度保守"}
+{"id": "A09", "existing": [], "utterance": "以后出差都提前两天到。", "expected": "ADD", "note": "时间习惯"}
+{"id": "A10", "existing": [], "utterance": "我的银行卡是6222020000000000000。", "expected": "NONE", "note": "敏感信息"}
+{"id": "A11", "existing": [{"id": "33ec1966", "fact": "用户乘飞机时偏好靠过道座位", "day": "2026-11-13"}], "utterance": "出差坐飞机还是想要靠过道座位。", "expected": "NOOP", "note": "重复陈述，无变化"}
+{"id": "A12", "existing": [{"id": "33ec1966", "fact": "用户乘飞机时偏好靠过道座位", "day": "2026-11-13"}], "utterance": "以后乘飞机也靠过道吧。", "expected": "NOOP", "note": "含改口词但内容相同，仍是 NOOP"}
+{"id": "A13", "existing": [{"id": "33ec1966", "fact": "用户乘飞机时偏好靠过道座位", "day": "2026-11-13"}], "utterance": "以后乘飞机都改成靠窗座位。", "expected": "REPLACE", "note": "含改口词，明确改变"}
+{"id": "A14", "existing": [{"id": "33ec1966", "fact": "用户乘飞机时偏好靠过道座位", "day": "2026-11-13"}], "utterance": "我不再要靠过道了，乘飞机以后选靠窗。", "expected": "REPLACE", "note": "改口词 + 明确反转"}
+{"id": "A15", "existing": [{"id": "33ec1966", "fact": "用户乘飞机时偏好靠过道座位", "day": "2026-11-13"}], "utterance": "我最近更喜欢靠窗了。", "expected": "ADD", "note": "无改口词的反转：按设计降级为 ADD，旧条目保留"}
+{"id": "A16", "existing": [{"id": "33ec1966", "fact": "用户乘飞机时偏好靠过道座位", "day": "2026-11-13"}], "utterance": "国内航班我还是靠过道，国际航班想靠窗。", "expected": "REFINE", "note": "补充条件，条目身份不变"}
+{"id": "A17", "existing": [{"id": "33ec1966", "fact": "用户乘飞机时偏好靠过道座位", "day": "2026-11-13"}], "utterance": "以后住酒店要大床房。", "expected": "ADD", "note": "同领域不同属性，不应替换机票条目"}
+{"id": "A18", "existing": [{"id": "33ec1966", "fact": "用户乘飞机时偏好靠过道座位", "day": "2026-11-13"}], "utterance": "这次去上海想坐靠窗，其他情况照旧。", "expected": "NONE", "note": "一次性，不记"}
+{"id": "A19", "existing": [{"id": "33ec1966", "fact": "用户乘飞机时偏好靠过道座位", "day": "2026-11-13"}], "utterance": "以后乘飞机也能选靠过道吗？", "expected": "NONE", "note": "疑问句，不构成事实"}
+{"id": "A20", "existing": [{"id": "33ec1966", "fact": "用户乘飞机时偏好靠过道座位", "day": "2026-11-13"}], "utterance": "如果以后改成靠窗，你帮我看看能不能订。", "expected": "NONE", "note": "假设，不是决定"}
+{"id": "A21", "existing": [{"id": "33ec1966", "fact": "用户乘飞机时偏好靠过道座位", "day": "2026-11-13"}, {"id": "c3c418d5", "fact": "用户住酒店偏好双床房", "day": "2026-11-14"}], "utterance": "以后住酒店都要大床房，不再订双床。", "expected": "REPLACE", "note": "多条目中只替换酒店那条"}
+{"id": "A22", "existing": [{"id": "33ec1966", "fact": "用户乘飞机时偏好靠过道座位", "day": "2026-11-13"}, {"id": "c3c418d5", "fact": "用户住酒店偏好双床房", "day": "2026-11-14"}], "utterance": "以后帮你订酒店时优先考虑评分高的。", "expected": "ADD", "note": "无关新增"}
+{"id": "A23", "existing": [{"id": "33ec1966", "fact": "用户乘飞机时偏好靠过道座位", "day": "2026-11-13"}, {"id": "c3c418d5", "fact": "用户住酒店偏好双床房", "day": "2026-11-14"}], "utterance": "以后坐飞机换成靠窗的位置吧。", "expected": "REPLACE", "note": "改口词 换成"}
+{"id": "A24", "existing": [{"id": "33ec1966", "fact": "用户乘飞机时偏好靠过道座位", "day": "2026-11-13"}, {"id": "c3c418d5", "fact": "用户住酒店偏好双床房", "day": "2026-11-14"}], "utterance": "酒店还是双床房，机票改靠窗。", "expected": "ADD", "note": "无改口词，按设计必然降级为 ADD；模型若判 REPLACE 由代码降级——已知漏判", "known_miss": true}
+{"id": "A25", "existing": [{"id": "33ec1966", "fact": "用户乘飞机时偏好靠过道座位", "day": "2026-11-13"}, {"id": "c3c418d5", "fact": "用户住酒店偏好双床房", "day": "2026-11-14"}], "utterance": "以后报销发票换成电子版。", "expected": "ADD", "note": "全新主题，无对应旧条目"}
+{"id": "A26", "existing": [{"id": "33ec1966", "fact": "用户乘飞机时偏好靠过道座位", "day": "2026-11-13"}], "utterance": "以后我坐高铁也靠过道。", "expected": "ADD", "note": "相似但不同交通工具，不应合并"}
+{"id": "A27", "existing": [{"id": "33ec1966", "fact": "用户乘飞机时偏好靠过道座位", "day": "2026-11-13"}], "utterance": "其实坐高铁我更想靠窗。", "expected": "ADD", "note": "不同交通工具"}
+{"id": "A28", "existing": [{"id": "33ec1966", "fact": "用户乘飞机时偏好靠过道座位", "day": "2026-11-13"}], "utterance": "以后订机票都选经济舱。", "expected": "ADD", "note": "同领域不同属性"}
+{"id": "A29", "existing": [{"id": "33ec1966", "fact": "用户乘飞机时偏好靠过道座位", "day": "2026-11-13"}], "utterance": "以后出差带小孩的话想要连座。", "expected": "REFINE", "note": "补充条件"}
+{"id": "A30", "existing": [{"id": "33ec1966", "fact": "用户乘飞机时偏好靠过道座位", "day": "2026-11-13"}], "utterance": "要是靠窗更便宜就选靠窗吧。", "expected": "NONE", "note": "条件性建议，非长期偏好"}
+{"id": "A31", "existing": [{"id": "dabc4d3a", "fact": "用户住酒店偏好大床房", "day": "2026-11-15"}], "utterance": "以后订酒店不再选青旅，要连锁的。", "expected": "REFINE", "note": "同主题补充限制，不推翻大床房"}
+{"id": "A32", "existing": [{"id": "dabc4d3a", "fact": "用户住酒店偏好大床房", "day": "2026-11-15"}], "utterance": "以后住酒店要双床房，不要大床了。", "expected": "REPLACE", "note": "明确反转"}
+{"id": "A33", "existing": [{"id": "dabc4d3a", "fact": "用户住酒店偏好大床房", "day": "2026-11-15"}], "utterance": "住酒店还是大床房舒服。", "expected": "NOOP", "note": "重复确认"}
+{"id": "A34", "existing": [{"id": "dabc4d3a", "fact": "用户住酒店偏好大床房", "day": "2026-11-15"}], "utterance": "以后住酒店要带早餐的。", "expected": "REFINE", "note": "补充条件"}
+{"id": "A35", "existing": [{"id": "dabc4d3a", "fact": "用户住酒店偏好大床房", "day": "2026-11-15"}], "utterance": "这次住酒店想试试双床房。", "expected": "NONE", "note": "一次性尝试"}
+{"id": "A36", "existing": [{"id": "cecaf791", "fact": "用户报销时偏好纸质发票", "day": "2026-11-10"}], "utterance": "以后报销发票换成电子版。", "expected": "REPLACE", "note": "改口词 换成"}
+{"id": "A37", "existing": [{"id": "cecaf791", "fact": "用户报销时偏好纸质发票", "day": "2026-11-10"}], "utterance": "报销的时候还是用纸质发票吧。", "expected": "NOOP", "note": "重复确认"}
+{"id": "A38", "existing": [{"id": "cecaf791", "fact": "用户报销时偏好纸质发票", "day": "2026-11-10"}], "utterance": "从今天起报销都用电子发票。", "expected": "ADD", "note": "无改口词：按设计降级为 ADD（已知漏判）"}
+{"id": "A39", "existing": [{"id": "cecaf791", "fact": "用户报销时偏好纸质发票", "day": "2026-11-10"}], "utterance": "以后报销要连酒店水单一起上传。", "expected": "REFINE", "note": "补充流程细节"}
+{"id": "A40", "existing": [{"id": "cecaf791", "fact": "用户报销时偏好纸质发票", "day": "2026-11-10"}], "utterance": "我下周要去北京开会，帮我看看行程。", "expected": "NONE", "note": "无记忆价值"}
