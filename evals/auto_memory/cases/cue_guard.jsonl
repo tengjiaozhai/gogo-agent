@@ -1,0 +1,37 @@
+{"id":"R01","category":"replace_with_term","scope":"same_turn","label":"replace","existing":"用户乘飞机时偏好靠过道座位","utterance":"以后乘飞机都改成靠窗座位。"}
+{"id":"R02","category":"replace_with_term","scope":"same_turn","label":"replace","existing":"用户乘飞机时偏好靠过道座位","utterance":"以后坐飞机换成靠窗的位置吧。"}
+{"id":"R03","category":"replace_with_term","scope":"same_turn","label":"replace","existing":"用户乘飞机时偏好靠过道座位","utterance":"我不再要靠过道了，乘飞机以后选靠窗。"}
+{"id":"R04","category":"replace_with_term","scope":"same_turn","label":"replace","existing":"用户住酒店偏好双床房","utterance":"以后住酒店都要大床房，不再订双床。"}
+{"id":"R05","category":"replace_with_term","scope":"same_turn","label":"replace","existing":"用户报销时偏好纸质发票","utterance":"以后报销发票换成电子版。"}
+{"id":"R06","category":"replace_with_term","scope":"same_turn","label":"replace","existing":"用户乘飞机时偏好靠过道座位","utterance":"以后都坐靠窗吧，不用再靠过道了。"}
+{"id":"R07","category":"replace_with_term","scope":"same_turn","label":"replace","existing":"用户乘飞机时偏好靠过道座位","utterance":"我改成靠窗座位了，以后都这样。"}
+{"id":"R08","category":"replace_without_term","scope":"same_turn","label":"replace","existing":"用户乘飞机时偏好靠过道座位","utterance":"从今天起乘飞机都要靠窗。"}
+{"id":"R09","category":"replace_without_term","scope":"same_turn","label":"replace","existing":"用户乘飞机时偏好靠过道座位","utterance":"现在开始改坐靠窗了，之前的靠过道不用记了。"}
+{"id":"R10","category":"replace_without_term","scope":"same_turn","label":"replace","existing":"用户住酒店偏好双床房","utterance":"今后住酒店都要大床房。"}
+{"id":"R11","category":"replace_without_term","scope":"same_turn","label":"replace","existing":"用户报销时偏好纸质发票","utterance":"往后报销都用电子版发票。"}
+{"id":"R12","category":"replace_without_term","scope":"same_turn","label":"replace","existing":"用户乘飞机时偏好靠过道座位","utterance":"之后出差都改用靠窗座位。"}
+{"id":"R13","category":"multi_sentence_replace","scope":"same_turn","label":"replace","existing":"用户乘飞机时偏好靠过道座位","utterance":"我下周去北京开会。以后乘飞机都改成靠窗。"}
+{"id":"R14","category":"multi_sentence_replace","scope":"same_turn","label":"replace","existing":"用户乘飞机时偏好靠过道座位","utterance":"我下周去北京开会。从今天起乘飞机都要靠窗。"}
+{"id":"K01","category":"keep_restated","scope":"same_turn","label":"keep","existing":"用户乘飞机时偏好靠过道座位","utterance":"出差坐飞机还是想要靠过道座位。"}
+{"id":"K02","category":"keep_restated","scope":"same_turn","label":"keep","existing":"用户乘飞机时偏好靠过道座位","utterance":"乘飞机的时候，我一直都喜欢靠过道。"}
+{"id":"K03","category":"keep_unrelated_control","scope":"same_turn","label":"keep","existing":"用户乘飞机时偏好靠过道座位","utterance":"下周去成都，帮我看看航班。"}
+{"id":"K04","category":"keep_one_off","scope":"same_turn","label":"keep","existing":"用户乘飞机时偏好靠过道座位","utterance":"这次去上海想坐靠窗，其他情况照旧。"}
+{"id":"K05","category":"keep_one_off","scope":"same_turn","label":"keep","existing":"用户乘飞机时偏好靠过道座位","utterance":"这一趟去广州靠窗就好，只是这一次。"}
+{"id":"K06","category":"keep_restated","scope":"same_turn","label":"keep","existing":"用户报销时偏好纸质发票","utterance":"报销的时候还是用纸质发票吧。"}
+{"id":"K07","category":"keep_question_with_term","scope":"same_turn","label":"keep","existing":"用户乘飞机时偏好靠过道座位","utterance":"以后乘飞机也能选靠过道吗？"}
+{"id":"K08","category":"keep_one_off_with_term","scope":"same_turn","label":"keep","existing":"用户乘飞机时偏好靠过道座位","utterance":"这次出差想坐靠窗的位置，不过以后还是靠过道。"}
+{"id":"K09","category":"keep_hypothetical_with_term","scope":"same_turn","label":"keep","existing":"用户乘飞机时偏好靠过道座位","utterance":"如果以后改成靠窗，你帮我看看能不能订。"}
+{"id":"K10","category":"keep_negated_with_term","scope":"same_turn","label":"keep","existing":"用户乘飞机时偏好靠过道座位","utterance":"不要以后都改成靠窗，这次靠过道就行。"}
+{"id":"K11","category":"keep_unrelated_topic_with_term","scope":"same_turn","label":"keep","existing":"用户乘飞机时偏好靠过道座位","utterance":"以后出差住酒店要大床房。"}
+{"id":"K12","category":"keep_same_domain_other_attribute","scope":"same_turn","label":"keep","existing":"用户住酒店偏好大床房","utterance":"以后订酒店不再选青旅，要连锁的。"}
+{"id":"K13","category":"keep_multi_sentence_with_term","scope":"same_turn","label":"keep","existing":"用户乘飞机时偏好靠过道座位","utterance":"以后出差住酒店要大床房。这次坐飞机想靠过道，跟以前一样。"}
+{"id":"K14","category":"keep_hedged_with_term","scope":"same_turn","label":"keep","existing":"用户乘飞机时偏好靠过道座位","utterance":"以后也许会靠窗吧，还没想好。"}
+{"id":"K15","category":"keep_hedged_with_term","scope":"same_turn","label":"keep","existing":"用户乘飞机时偏好靠过道座位","utterance":"以后可能想换成靠窗，不过还不确定。"}
+{"id":"K16","category":"keep_restated_with_term","scope":"same_turn","label":"keep","existing":"用户乘飞机时偏好靠过道座位","utterance":"以后乘飞机也靠过道吧。"}
+{"id":"K17","category":"keep_multi_sentence_no_term","scope":"same_turn","label":"keep","existing":"用户乘飞机时偏好靠过道座位","utterance":"我下周去北京开会。这次坐飞机想靠过道。"}
+{"id":"A01","category":"ambiguous_reversal","scope":"same_turn","label":"ambiguous","existing":"用户乘飞机时偏好靠过道座位","utterance":"最近更喜欢靠窗了。","note":"反转但未说明是否长期"}
+{"id":"A02","category":"ambiguous_reversal","scope":"same_turn","label":"ambiguous","existing":"用户乘飞机时偏好靠过道座位","utterance":"其实我现在觉得靠窗舒服一些。","note":"倾向变化，未说明范围"}
+{"id":"A03","category":"ambiguous_reversal","scope":"same_turn","label":"ambiguous","existing":"用户乘飞机时偏好靠过道座位","utterance":"感觉靠窗好像更适合我。","note":"试探性表述"}
+{"id":"X01","category":"cross_turn_confirm","scope":"cross_turn","label":"replace","existing":"用户乘飞机时偏好靠过道座位","previous_utterance":"以后乘飞机都改成靠窗。","utterance":"好的，就这样。","note":"前提：上一轮 REPLACE 未执行；守卫只看本轮，无法补救"}
+{"id":"X02","category":"cross_turn_confirm","scope":"cross_turn","label":"replace","existing":"用户乘飞机时偏好靠过道座位","previous_utterance":"从今天起乘飞机都要靠窗。","utterance":"嗯，对，就是这样。","note":"前提同 X01"}
+{"id":"X03","category":"cross_turn_keep","scope":"cross_turn","label":"keep","existing":"用户乘飞机时偏好靠过道座位","previous_utterance":"以后出差住酒店要大床房。","utterance":"好，那飞机还是靠过道。"}

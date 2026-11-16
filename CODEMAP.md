@@ -110,6 +110,7 @@
 ## src/gogo_agent/context
 
 - [`src/gogo_agent/context/__init__.py`](src/gogo_agent/context/__init__.py) — 标记模型输入转换与长期偏好模块。
+- [`src/gogo_agent/context/cue_guard.py`](src/gogo_agent/context/cue_guard.py) — 纯函数改口词守卫：判定本轮原话是否含改口词，决定能否把旧条目判为 REPLACE；生产代码与评测共用同一词表。
 - [`src/gogo_agent/context/input.py`](src/gogo_agent/context/input.py) — 为模型输入副本注入可信动态上下文、标记提示词版本并压缩重复只读回执。
 - [`src/gogo_agent/context/preferences.py`](src/gogo_agent/context/preferences.py) — 提供本人长期偏好的本机 SQL 存储、显式更新撤回与认证 HTTP 接口。
 - [`src/gogo_agent/context/reme.py`](src/gogo_agent/context/reme.py) — 只读检索本人 ReMe 历史偏好片段，每次强制 `digest/users/<hash>/` 前缀并在失败时降级为空。
@@ -328,6 +329,12 @@
 
 - [`scripts/demo_booking_chat.py`](scripts/demo_booking_chat.py) — 用固定模型、真实认证与 SDK、隔离 SQLite 和模拟供应商演示网页预订确认与结果回放。
 
+## evals/auto_memory
+
+- [`evals/auto_memory/README.md`](evals/auto_memory/README.md) — 说明自动记忆评测的标注规则、指标、局限与运行方式；规则层不调用模型。
+- [`evals/auto_memory/cases/cue_guard.jsonl`](evals/auto_memory/cases/cue_guard.jsonl) — 改口词守卫标注集（37 条，作者起草未复核），含应替换、不应替换、待定与跨轮样例。
+- [`evals/auto_memory/run_cue_guard.py`](evals/auto_memory/run_cue_guard.py) — 规则层评测：用设计基线的改口词计算漏判率与误判率，输出分类别结果、词项诊断与明细；纯标准库，不读写 ReMe。
+
 ## output
 
 - [`output/l0_l1_intent_routing.html`](output/l0_l1_intent_routing.html) — 提供 L0/L1 意图路由和规则否决条件的独立交互图解。
@@ -346,7 +353,8 @@
 - [`tests/test_agent_state_storage.py`](tests/test_agent_state_storage.py) — 验证 AgentState 方言类型、旧表扩容与幂等，以及隔离 MySQL/MariaDB 中超过 64 KiB 状态的读回和 JSON/SSE 保存。
 - [`tests/test_068_085_context.py`](tests/test_068_085_context.py) — 验证真实 SDK 输入转换、结构化失败、两轮修订、候选隔离过期及显式偏好的认证和撤回。
 - [`tests/test_reme_recall.py`](tests/test_reme_recall.py) — 用本机临时 ReMe 实例验证本人隔离与 top_k，并用静默套接字与 MockTransport 验证停服、超时、请求前缀和异常降级。
-- [`tests/test_reme_auto_memory.py`](tests/test_reme_auto_memory.py) — 验证自动记忆的事实清洗、去重合并、本人前缀写入、读取失败不覆盖与后台调度。
+- [`tests/test_reme_auto_memory.py`](tests/test_reme_auto_memory.py) — 验证自动记忆的事实清洗、去重合并、条件写冲突重合并、并发创建校验、超限挤出到历史文件与历史追加幂等。
+- [`tests/test_cue_guard.py`](tests/test_cue_guard.py) — 验证改口词守卫的基线词表、命中判定与"只看关键词不做主题判断"的边界。
 - [`tests/test_booking_chat.py`](tests/test_booking_chat.py) — 验证网页预订的认证确认、实际主子委派、门禁、幂等、失败恢复、未知结果与历史回放。
 - [`tests/test_booking_auto_review.py`](tests/test_booking_auto_review.py) — 验证预订准备时自动审核：未审核计划自动审核后出卡，fail 不出卡并记入 denials，warning 不阻止预订并作为审核建议随确认卡展示。
 - [`tests/test_review_outcome_warnings.py`](tests/test_review_outcome_warnings.py) — 验证审核摘要的警告同时包含客观层与仲裁层、保持顺序并去重，阻塞项只来自仲裁 fail。
