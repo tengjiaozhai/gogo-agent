@@ -277,10 +277,12 @@
 - [`docs/research/issue-compute-plan-参数契约缺失.md`](docs/research/issue-compute-plan-参数契约缺失.md) — 记录 compute_plan 参数契约缺失缺陷的根因、责任归属、修复内容与验收结果。
 - [`docs/research/issue-预订Agent三项能力缺口与接入方案.md`](docs/research/issue-预订Agent三项能力缺口与接入方案.md) — 对照 Java 基线评估真实供应商、支付链路、用户信息与密钥三项缺口的接入面、阻塞点与分步方案。
 - [`docs/research/长期记忆复刻方案-ReMe.md`](docs/research/长期记忆复刻方案-ReMe.md) — 对照 Java 百炼长期记忆的五项职责，给出 Python 用 ReMe 复刻的三套方案、跨用户隔离缺陷实测与服务器部署边界。
+- [`docs/research/长期记忆整理机制-调研与实施方案-P0至P4.md`](docs/research/长期记忆整理机制-调研与实施方案-P0至P4.md) — 记录长期记忆整理的 deep-research 结论、项目现状与 P0–P4 实施方案（未实施）。
 
 ## docs/迁移
 
 - [`docs/迁移/前端提前迁移.md`](docs/迁移/前端提前迁移.md) — 记录原 React 前端已接入的 Python HTTP/SSE 能力及后续页面的恢复条件。
+- [`docs/迁移/中间件迁移方案.md`](docs/迁移/中间件迁移方案.md) — 记录 121.43.231.155 到 118.145.132.139 的中间件迁移清单、决策、步骤与验证结果。
 
 ## exercises
 
@@ -381,4 +383,4 @@
 - [`tests/test_043_planning_chat.py`](tests/test_043_planning_chat.py) — 验证途牛候选只用当前用户的 Key、搜索失败与缺 Key 显式报错、聊天只在规划意图下注册规划工具、规划 Agent 工具面不含预订与取消。
 - [`tests/test_053_subjective_review.py`](tests/test_053_subjective_review.py) — 验证模型主观评估的结构化输出、无效输出与异常转为不可用、三维度与客观结论的仲裁。
 - [`tests/test_mariadb_integration.py`](tests/test_mariadb_integration.py) — 验证真实 MariaDB 数据库连接、用户密码迁移、会话消息与 agentscope_session 存取。
-- [`tests/test_redis_integration.py`](tests/test_redis_integration.py) — 验证真实 121.43.231.155 Redis 连接、30 天 TTL、跨实例 Token 持久化与平滑降级。
+- [`tests/test_redis_integration.py`](tests/test_redis_integration.py) — 验证真实 118.145.132.139 Redis 连接、30 天 TTL、跨实例 Token 持久化与平滑降级。

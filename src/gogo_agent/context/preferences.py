@@ -158,7 +158,7 @@ class InMemoryPreferenceStore(PreferenceStore):
 
 
 def _redis_client_from_env() -> redis.Redis:
-    host = os.getenv("GOGO_REDIS_HOST", "121.43.231.155").strip()
+    host = os.getenv("GOGO_REDIS_HOST", "118.145.132.139").strip()
     if not host:
         raise PreferenceStoreError("未配置 GOGO_REDIS_HOST，无法保存长期偏好")
     return redis.Redis(
